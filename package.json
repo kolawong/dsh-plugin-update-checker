@@ -1,0 +1,65 @@
+{
+  "name": "dsh-plugin-update-checker",
+  "version": "1.3.0",
+  "description": "DeepSeek Harness bundle providing core & plugin update checks, GitHub upstream release tracking, Web UI plugin manager, and lifecycle control.",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
+      "platform": "web"
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "update-checker",
+    "plugin-manager",
+    "uninstaller",
+    "version",
+    "updater",
+    "ui-settings"
+  ],
+  "author": "kola",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kolawong/dsh-plugin-update-checker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kolawong/dsh-plugin-update-checker/issues"
+  },
+  "homepage": "https://github.com/kolawong/dsh-plugin-update-checker#readme",
+  "files": [
+    "index.js",
+    "client.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "assets",
+    "README.md",
+    "README_CN.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/schemastery": ">=3.0.0"
+  }
+}

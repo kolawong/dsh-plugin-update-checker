@@ -1,0 +1,10 @@
+# DeepSeek Harness — System & Plugin Manager Bundle Patch
+- insert:
+    - id: update-checker
+      name: 'dsh-plugin-update-checker'
+      inject:
+        - webServer
+      config:
+        autoCheck: true
+        checkIntervalHours: 6
+        githubRepo: 'deepseek-ai/deepseek-harness'
