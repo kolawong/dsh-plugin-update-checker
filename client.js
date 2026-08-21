@@ -1184,7 +1184,253 @@ window.__ModuleLoader__.load({
 
     exports.inject = ["locale", "slots"];
 
+    
+    // ==========================================
+    // Global Upgrade HUD & BeforeUnload Guard
+    // ==========================================
+    let isGlobalUpgrading = false;
+    let globalUpgradeTimer = null;
+    let globalStartedAt = 0;
+    let globalLogExpanded = false;
+
+    function ensureHudStyles() {
+      if (document.getElementById("dsh-upgrade-hud-styles")) return;
+      const s = document.createElement("style");
+      s.id = "dsh-upgrade-hud-styles";
+      s.textContent = `
+        @keyframes dsh-hud-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.6; transform: scale(0.92); }
+        }
+        @keyframes dsh-hud-glow {
+          0%, 100% { box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 20px rgba(99, 102, 241, 0.4); }
+          50% { box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 32px rgba(56, 189, 248, 0.6); }
+        }
+        .dsh-hud-pill {
+          position: fixed;
+          top: 14px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 999999;
+          background: rgba(15, 23, 42, 0.94);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid rgba(99, 102, 241, 0.45);
+          color: #f8fafc;
+          border-radius: 999px;
+          padding: 8px 16px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          font-size: 13px;
+          animation: dsh-hud-glow 3s infinite ease-in-out;
+          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+          box-sizing: border-box;
+          max-width: 90vw;
+        }
+        .dsh-hud-pill.completed {
+          border-color: rgba(16, 185, 129, 0.6);
+          animation: none;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 24px rgba(16, 185, 129, 0.4);
+        }
+        .dsh-hud-card {
+          position: fixed;
+          top: 60px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 999998;
+          width: 580px;
+          max-width: 92vw;
+          max-height: 280px;
+          background: rgba(15, 23, 42, 0.96);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          border: 1px solid rgba(99, 102, 241, 0.35);
+          border-radius: 12px;
+          padding: 12px;
+          color: #10b981;
+          font-family: monospace;
+          font-size: 11px;
+          line-height: 1.5;
+          overflow-y: auto;
+          white-space: pre-wrap;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+        }
+      `;
+      document.head.appendChild(s);
+    }
+
+    function initGlobalUpgradeGuard() {
+      if (typeof window === "undefined" || typeof document === "undefined") return;
+      ensureHudStyles();
+
+      // Intercept accidental page refresh/close
+      window.addEventListener("beforeunload", (e) => {
+        if (isGlobalUpgrading) {
+          const msg = "DeepSeek Harness 内核正在进行全量编译升级，此时刷新可能导致版本不完整。确定要离开或刷新吗？";
+          e.preventDefault();
+          e.returnValue = msg;
+          return msg;
+        }
+      });
+
+      let hudEl = document.getElementById("dsh-global-upgrade-hud");
+      if (!hudEl) {
+        hudEl = document.createElement("div");
+        hudEl.id = "dsh-global-upgrade-hud";
+        hudEl.style.display = "none";
+        document.body.appendChild(hudEl);
+      }
+
+      const pollStatus = async () => {
+        try {
+          const res = await fetch("/api/update-checker/upgrade/status");
+          if (!res.ok) return;
+          const json = await res.json();
+          const st = json.data || json;
+
+          if (st.running) {
+            isGlobalUpgrading = true;
+            if (!globalStartedAt) {
+              globalStartedAt = st.startedAt ? new Date(st.startedAt).getTime() : Date.now();
+            }
+            renderGlobalHud(st);
+          } else if (isGlobalUpgrading) {
+            // Just transitioned from running to finished!
+            isGlobalUpgrading = false;
+            renderCompletedHud(st);
+          }
+        } catch (e) {}
+      };
+
+      setInterval(pollStatus, 1500);
+      pollStatus();
+    }
+
+    function renderGlobalHud(st) {
+      const hudEl = document.getElementById("dsh-global-upgrade-hud");
+      if (!hudEl) return;
+      hudEl.style.display = "block";
+
+      const elapsedSec = Math.max(1, Math.floor((Date.now() - (globalStartedAt || Date.now())) / 1000));
+      
+      const phaseNames = {
+        stash: "① 暂存本地修改",
+        pull: "② 拉取上游更新 (git pull)",
+        unstash: "③ 恢复本地修改",
+        install: "④ 安装依赖 (pnpm install)",
+        build: "⑤ 全量打包编译 (pnpm build)",
+      };
+      const phaseLabel = phaseNames[st.phase] || st.phaseLabel || "内核升级构建中";
+
+      hudEl.innerHTML = `
+        <div class="dsh-hud-pill">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #38bdf8; animation: dsh-hud-pulse 1.2s infinite ease-in-out;"></span>
+            <span style="font-weight: 600; color: #fff; display: flex; align-items: center; gap: 6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: dsh-spin 1.5s linear infinite; color: #38bdf8;">
+                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              正在升级内核
+            </span>
+          </div>
+          <span style="background: rgba(255,255,255,0.1); border-radius: 999px; padding: 2px 8px; font-size: 11px; color: #cbd5e1;">
+            ${phaseLabel}
+          </span>
+          <span style="font-family: monospace; font-size: 12px; color: #38bdf8; font-weight: 600;">
+            ⏱️ ${elapsedSec}s
+          </span>
+          <span style="color: #fbbf24; font-size: 11px; display: flex; align-items: center; gap: 4px;">
+            ⚠️ 请勿刷新页面
+          </span>
+          <button id="dsh-hud-toggle-log" style="background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer;">
+            ${globalLogExpanded ? "收起日志" : "查看日志"}
+          </button>
+        </div>
+        ${globalLogExpanded ? `<div class="dsh-hud-card" id="dsh-hud-card-body">${st.tail || "正在获取实时编译输出..."}</div>` : ""}
+      `;
+
+      const toggleBtn = document.getElementById("dsh-hud-toggle-log");
+      if (toggleBtn) {
+        toggleBtn.onclick = () => {
+          globalLogExpanded = !globalLogExpanded;
+          renderGlobalHud(st);
+        };
+      }
+      if (globalLogExpanded) {
+        const cardBody = document.getElementById("dsh-hud-card-body");
+        if (cardBody) cardBody.scrollTop = cardBody.scrollHeight;
+      }
+    }
+
+    function renderCompletedHud(st) {
+      const hudEl = document.getElementById("dsh-global-upgrade-hud");
+      if (!hudEl) return;
+      hudEl.style.display = "block";
+
+      const ok = st.result ? st.result.success === true : false;
+
+      if (ok) {
+        hudEl.innerHTML = `
+          <div class="dsh-hud-pill completed">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="color: #10b981; font-size: 14px;">🎉</span>
+              <span style="font-weight: 600; color: #fff;">升级全量编译完成！</span>
+            </div>
+            <button id="dsh-hud-restart-btn" style="background: #10b981; border: none; color: #fff; font-weight: 600; border-radius: 999px; padding: 4px 14px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 10px rgba(16,185,129,0.4);">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              立即重启服务生效
+            </button>
+            <button id="dsh-hud-close-btn" style="background: none; border: none; color: #94a3b8; font-size: 14px; cursor: pointer; padding: 0 4px;">✕</button>
+          </div>
+        `;
+
+        const restartBtn = document.getElementById("dsh-hud-restart-btn");
+        if (restartBtn) {
+          restartBtn.onclick = async () => {
+            restartBtn.textContent = "正在重启服务…";
+            restartBtn.disabled = true;
+            try {
+              await fetch("/api/plugins/restart", { method: "POST" });
+            } catch (e) {}
+            setTimeout(() => {
+              window.location.reload();
+            }, 3500);
+          };
+        }
+
+        const closeBtn = document.getElementById("dsh-hud-close-btn");
+        if (closeBtn) {
+          closeBtn.onclick = () => {
+            hudEl.style.display = "none";
+          };
+        }
+      } else {
+        hudEl.innerHTML = `
+          <div class="dsh-hud-pill" style="border-color: #ef4444; animation: none;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="color: #ef4444; font-size: 14px;">❌</span>
+              <span style="font-weight: 600; color: #fff;">升级遇到问题</span>
+            </div>
+            <span style="font-size: 11px; color: #fca5a5;">请查看日志排查</span>
+            <button id="dsh-hud-close-btn" style="background: none; border: none; color: #94a3b8; font-size: 14px; cursor: pointer; padding: 0 4px;">✕</button>
+          </div>
+        `;
+        const closeBtn = document.getElementById("dsh-hud-close-btn");
+        if (closeBtn) {
+          closeBtn.onclick = () => {
+            hudEl.style.display = "none";
+          };
+        }
+      }
+    }
+
     exports.apply = function (ctx) {
+      initGlobalUpgradeGuard();
+
       ctx.locale.register(NS, { zh, en });
       ctx.slots.inject("settings.plugin.item", function* () {
         yield ctx.slots.register(
