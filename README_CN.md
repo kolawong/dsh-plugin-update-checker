@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blueviolet.svg)](https://github.com/deepseek-ai/deepseek-harness)
-[![Version](https://img.shields.io/badge/Version-1.3.0-green.svg)](package.json)
+[![Version](https://img.shields.io/badge/Version-1.3.1-green.svg)](package.json)
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Linux%20%7C%20macOS-informational.svg)](#)
 
 [English](README.md) | 简体中文
@@ -107,8 +107,9 @@ git clone https://github.com/kolawong/dsh-plugin-update-checker.git ~/dsh-plugin
 | :--- | :--- | :--- |
 | `/api/update-checker/status` | `GET` | 获取系统版本状态、落后提交数、最近提交与所有扫描到的插件列表。 |
 | `/api/update-checker/check` | `POST` | 立即触发向远程 Git 仓库的静默 Fetch 检查。 |
-| `/api/update-checker/upgrade` | `POST` | 在后台启动一键内核升级任务（`git pull && pnpm install && pnpm build`）。 |
-| `/api/update-checker/log` | `GET` | 实时读取升级编译日志流。 |
+| `/api/update-checker/upgrade` | `POST` | 在后台启动一键内核升级：暂存本地修改 → `git pull --ff-only` → 恢复修改 → `pnpm install` → `pnpm build`。 |
+| `/api/update-checker/upgrade/status` | `GET` | 升级实时进度：运行状态、当前阶段与滚动日志尾部。 |
+| `/api/update-checker/log` | `GET` | 完整升级日志（纯文本；升级进行中返回实时尾部）。 |
 | `/api/plugins/toggle` | `POST` | 切换指定插件的启用/停用状态（`{ pluginId, enabled, profile }`）。 |
 | `/api/plugins/uninstall` | `POST` | 从 Profile 中彻底卸载插件并清理本地依赖包。 |
 | `/api/plugins/restart` | `POST` | 在后台平滑重启 DSH Web 守护进程。 |

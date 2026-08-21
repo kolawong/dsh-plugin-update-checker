@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blueviolet.svg)](https://github.com/deepseek-ai/deepseek-harness)
-[![Version](https://img.shields.io/badge/Version-1.3.0-green.svg)](package.json)
+[![Version](https://img.shields.io/badge/Version-1.3.1-green.svg)](package.json)
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Linux%20%7C%20macOS-informational.svg)](#)
 
 English | [简体中文](README_CN.md)
@@ -109,8 +109,9 @@ The backend registers several lightweight REST endpoints onto the DSH WebServer:
 | :--- | :--- | :--- |
 | `/api/update-checker/status` | `GET` | Retrieve core git status, behind count, recent commits, and discovered plugins. |
 | `/api/update-checker/check` | `POST` | Trigger an immediate fetch against remote repository. |
-| `/api/update-checker/upgrade` | `POST` | Spawn background core update (`git pull && pnpm install && pnpm build`). |
-| `/api/update-checker/log` | `GET` | Stream live compilation and upgrade logs. |
+| `/api/update-checker/upgrade` | `POST` | Spawn background core upgrade: stash local changes → `git pull --ff-only` → restore → `pnpm install` → `pnpm build`. |
+| `/api/update-checker/upgrade/status` | `GET` | Live upgrade progress: running flag, current phase, and streaming log tail. |
+| `/api/update-checker/log` | `GET` | Full upgrade log (plain text; live tail while an upgrade is running). |
 | `/api/plugins/toggle` | `POST` | Toggle a plugin's `enabled` state (`{ pluginId, enabled, profile }`). |
 | `/api/plugins/uninstall` | `POST` | Remove plugin from profile `package.json`, patches, and run `pnpm remove`. |
 | `/api/plugins/restart` | `POST` | Safely restart DSH web daemon in the background. |

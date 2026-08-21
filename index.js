@@ -1,5 +1,5 @@
 /**
- * dsh-plugin-update-checker — Server half (Version 1.3.0)
+ * dsh-plugin-update-checker — Server half (Version 1.3.1)
  *
  * DeepSeek Harness Cordis plugin providing:
  * 1. Core version tracking (local Git repo vs upstream GitHub)
@@ -12,8 +12,8 @@
  * @license MIT
  */
 
-import { exec, execSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, readlinkSync, unlinkSync, statSync } from "node:fs";
+import { execSync, spawn } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, readlinkSync, unlinkSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import z from "@deepseek-ai/schemastery";
@@ -447,6 +447,39 @@ const cachedState = {
   lastUpgradeResult: null,
 };
 
+// Live upgrade process runtime (streamed output tail + current phase)
+const upgradeRuntime = {
+  phase: null,
+  phaseLabel: "",
+  startedAt: null,
+  finishedAt: null,
+  tailLines: [],
+  pending: "",
+};
+
+const UPGRADE_TAIL_MAX_LINES = 400;
+
+function appendUpgradeOutput(chunk) {
+  const text = upgradeRuntime.pending + chunk.toString("utf8");
+  const lines = text.split("\n");
+  upgradeRuntime.pending = lines.pop() ?? "";
+  for (const line of lines) {
+    upgradeRuntime.tailLines.push(line);
+    const m = line.match(/^\[PHASE\]\s+([a-z-]+)\s*\|\s*(.*)$/);
+    if (m) {
+      upgradeRuntime.phase = m[1];
+      upgradeRuntime.phaseLabel = m[2];
+    }
+  }
+  if (upgradeRuntime.tailLines.length > UPGRADE_TAIL_MAX_LINES) {
+    upgradeRuntime.tailLines.splice(0, upgradeRuntime.tailLines.length - UPGRADE_TAIL_MAX_LINES);
+  }
+}
+
+function upgradeTailText() {
+  return upgradeRuntime.tailLines.join("\n");
+}
+
 function loadPersistedState() {
   try {
     const file = getStateFilePath();
@@ -568,33 +601,145 @@ export function apply(ctx, config) {
           }
 
           cachedState.isUpgrading = true;
+          cachedState.lastUpgradeResult = null;
+          upgradeRuntime.phase = "starting";
+          upgradeRuntime.phaseLabel = "";
+          upgradeRuntime.startedAt = new Date().toISOString();
+          upgradeRuntime.finishedAt = null;
+          upgradeRuntime.tailLines = [];
+          upgradeRuntime.pending = "";
+
           const logPath = getUpgradeLogPath();
           const coreDir = findCoreRepoPath();
+          try {
+            writeFileSync(logPath, `=== DeepSeek Harness Upgrade Started at ${upgradeRuntime.startedAt} ===\n`, "utf8");
+          } catch {}
 
-          const upgradeCmd = `
-            echo "=== DeepSeek Harness Upgrade Started at $(date) ===" > "${logPath}"
-            cd "${coreDir}" >> "${logPath}" 2>&1
-            echo "1. Pulling latest git commits..." >> "${logPath}"
-            git pull origin master >> "${logPath}" 2>&1
-            export PATH=/root/.nvm/versions/node/v22.23.2/bin:$PATH
-            echo "2. Installing updated dependencies..." >> "${logPath}"
-            pnpm install >> "${logPath}" 2>&1
-            echo "3. Building harness packages..." >> "${logPath}"
-            pnpm build >> "${logPath}" 2>&1
-            echo "=== Upgrade Build Completed at $(date) ===" >> "${logPath}"
-          `;
+          // Stash local modifications so a fast-forward pull can never be
+          // blocked by "local changes would be overwritten", then restore them
+          // after the pull. Every step streams its output to the parent process
+          // (which mirrors it into upgrade.log and the live tail buffer).
+          const upgradeScript = `
+set -u
+CORE=${JSON.stringify(coreDir)}
+if [ ! -d "$CORE/.git" ]; then
+  echo "[FAIL] core repo not found at $CORE"
+  exit 10
+fi
+cd "$CORE" || exit 10
 
-          exec(upgradeCmd, { maxBuffer: 10 * 1024 * 1024 }, (err) => {
+echo ""
+echo "[PHASE] stash | Stashing local changes"
+STASHED=0
+if [ -n "$(git status --porcelain)" ]; then
+  if git stash push --include-untracked -m "dsh-upgrade auto-stash $(date '+%F %T')"; then
+    STASHED=1
+    echo "[INFO] local changes stashed"
+  else
+    echo "[WARN] git stash failed; pulling without stashing"
+  fi
+else
+  echo "[INFO] no local changes to stash"
+fi
+
+echo ""
+echo "[PHASE] pull | Pulling upstream updates (git pull --ff-only)"
+if ! git pull --ff-only origin master; then
+  echo "[FAIL] git pull failed - upgrade aborted"
+  exit 20
+fi
+
+echo ""
+echo "[PHASE] unstash | Restoring local changes"
+if [ "$STASHED" -eq 1 ]; then
+  if git stash pop; then
+    echo "[INFO] local changes restored"
+  else
+    echo "[WARN] restoring local changes conflicted with upstream; your changes are kept safe in 'git stash' - resolve manually later (git stash list / git stash pop)"
+  fi
+else
+  echo "[INFO] nothing to restore"
+fi
+
+echo ""
+echo "[PHASE] install | Installing dependencies (pnpm install)"
+if ! pnpm install; then
+  echo "[FAIL] pnpm install failed - upgrade aborted"
+  exit 30
+fi
+
+echo ""
+echo "[PHASE] build | Building harness packages (pnpm build)"
+if ! pnpm build; then
+  echo "[FAIL] pnpm build failed - upgrade aborted"
+  exit 40
+fi
+
+echo ""
+echo "=== Upgrade Build Completed at $(date) ==="
+`;
+
+          let settled = false;
+          let timeout = null;
+          const finalize = (success, error) => {
+            if (settled) return;
+            settled = true;
+            if (timeout) clearTimeout(timeout);
             cachedState.isUpgrading = false;
+            upgradeRuntime.finishedAt = new Date().toISOString();
             cachedState.lastUpgradeResult = {
-              success: !err,
-              error: err ? err.message : null,
-              time: new Date().toISOString(),
+              success,
+              error: success ? null : error,
+              time: upgradeRuntime.finishedAt,
             };
-            if (!err) {
+            if (success) {
               runFullCheck().catch(() => {});
             }
+          };
+
+          let child;
+          try {
+            child = spawn("bash", ["-c", upgradeScript], {
+              cwd: coreDir,
+              env: {
+                ...process.env,
+                PATH: `/root/.nvm/versions/node/v22.23.2/bin:${process.env.PATH || "/usr/local/bin:/usr/bin:/bin"}`,
+                GIT_TERMINAL_PROMPT: "0",
+              },
+            });
+          } catch (err) {
+            appendUpgradeOutput(Buffer.from(`[FAIL] failed to spawn upgrade process: ${err.message}\n`));
+            finalize(false, err.message);
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, message: err.message }));
+            return;
+          }
+
+          child.stdout.on("data", (chunk) => {
+            appendUpgradeOutput(chunk);
+            try { appendFileSync(logPath, chunk); } catch {}
           });
+          child.stderr.on("data", (chunk) => {
+            appendUpgradeOutput(chunk);
+            try { appendFileSync(logPath, chunk); } catch {}
+          });
+          child.on("error", (err) => {
+            appendUpgradeOutput(Buffer.from(`[FAIL] upgrade process error: ${err.message}\n`));
+            finalize(false, err.message);
+          });
+          child.on("close", (code) => {
+            const tail = code === 0 ? "\n[DONE]\n" : `\n[FAIL] upgrade exited with code ${code}\n`;
+            appendUpgradeOutput(Buffer.from(tail));
+            try { appendFileSync(logPath, tail); } catch {}
+            finalize(code === 0, code === 0 ? null : `upgrade exited with code ${code}`);
+          });
+
+          // Hard safety cap: never leave isUpgrading stuck forever.
+          timeout = setTimeout(() => {
+            appendUpgradeOutput(Buffer.from("\n[FAIL] upgrade timed out after 15 minutes and was killed\n"));
+            try { child.kill("SIGKILL"); } catch {}
+            finalize(false, "timeout after 15 minutes");
+          }, 15 * 60 * 1000);
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(
@@ -602,6 +747,7 @@ export function apply(ctx, config) {
               ok: true,
               message: "Upgrade process spawned in background",
               logPath: "/api/update-checker/log",
+              statusPath: "/api/update-checker/upgrade/status",
             })
           );
           return;
@@ -611,17 +757,50 @@ export function apply(ctx, config) {
       },
     });
 
-    // 4. GET /api/update-checker/log
+    // 4. GET /api/update-checker/upgrade/status — lightweight live progress poll
+    ctx.webServer.register({
+      kind: "exact",
+      path: "/api/update-checker/upgrade/status",
+      handler: async (req, res) => {
+        if (req.method === "GET") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              ok: true,
+              data: {
+                running: Boolean(cachedState.isUpgrading),
+                phase: upgradeRuntime.phase,
+                phaseLabel: upgradeRuntime.phaseLabel,
+                startedAt: upgradeRuntime.startedAt,
+                finishedAt: upgradeRuntime.finishedAt,
+                tail: upgradeTailText(),
+                result: cachedState.lastUpgradeResult,
+              },
+            })
+          );
+          return;
+        }
+        res.writeHead(405, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "Method not allowed" }));
+      },
+    });
+
+    // 5. GET /api/update-checker/log
     ctx.webServer.register({
       kind: "exact",
       path: "/api/update-checker/log",
       handler: async (req, res) => {
         if (req.method === "GET") {
           const logPath = getUpgradeLogPath();
-          let content = "No upgrade log available.";
-          if (existsSync(logPath)) {
-            content = readFileSync(logPath, "utf8");
+          // Prefer the in-memory live tail (real-time during an upgrade);
+          // fall back to the persisted log file after a restart.
+          let content = upgradeTailText();
+          if (!content && existsSync(logPath)) {
+            try {
+              content = readFileSync(logPath, "utf8");
+            } catch {}
           }
+          if (!content) content = "No upgrade log available.";
           res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
           res.end(content);
           return;
@@ -631,7 +810,7 @@ export function apply(ctx, config) {
       },
     });
 
-    // 5. POST /api/plugins/uninstall
+    // 6. POST /api/plugins/uninstall
     ctx.webServer.register({
       kind: "exact",
       path: "/api/plugins/uninstall",
@@ -675,7 +854,7 @@ export function apply(ctx, config) {
       },
     });
 
-    // 6. POST /api/plugins/toggle
+    // 7. POST /api/plugins/toggle
     ctx.webServer.register({
       kind: "exact",
       path: "/api/plugins/toggle",
@@ -719,7 +898,7 @@ export function apply(ctx, config) {
       },
     });
 
-    // 7. POST /api/plugins/restart
+    // 8. POST /api/plugins/restart
     ctx.webServer.register({
       kind: "exact",
       path: "/api/plugins/restart",

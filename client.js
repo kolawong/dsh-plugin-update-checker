@@ -1,7 +1,10 @@
 /**
- * dsh-plugin-update-checker — Client half (Web UI Settings Card)
+ * dsh-plugin-update-checker — Client half (Web UI Settings Card) (Version 1.3.1)
  *
  * 100% aligned with official DSH PluginCard design specification.
+ * Full reactive adaptation for Light Mode and Dark Mode.
+ * Fixed 4-column single-row layout and accurate API routing.
+ * Live upgrade progress: streams phase + log tail from the server.
  */
 
 window.__ModuleLoader__.load({
@@ -48,31 +51,38 @@ window.__ModuleLoader__.load({
       restartServer: "重启服务生效",
       restarting: "正在重启…",
       restartPrompt: "插件配置已更改，建议重启 Web 服务以完全生效。",
-      actionFailed: "操作失败：{message}",
+      upgradedReload: "升级完成！正在重启服务并刷新页面…",
+      upgradeFailed: "升级失败，请查看日志",
+      upgradeSuccessRestart: "升级完成！点击「重启服务」应用新版本。",
+      phaseStash: "暂存本地修改",
+      phasePull: "拉取上游更新",
+      phaseUnstash: "恢复本地修改",
+      phaseInstall: "安装依赖",
+      phaseBuild: "编译内核",
     };
 
     const en = {
       title: "System & Plugins",
-      description: "Core upgrade tracking & plugin lifecycle management",
-      currentVersion: "Current",
-      latestVersion: "Upstream",
+      description: "Core update monitor and extension plugin lifecycle management",
+      currentVersion: "Current Version",
+      latestVersion: "Remote Latest",
       status: "Status",
-      upToDate: "Up to date",
+      upToDate: "Up to Date",
       updateAvailable: "Update Available",
       checking: "Checking…",
-      checkBtn: "Check Updates",
-      upgradeBtn: "Upgrade",
+      checkBtn: "Check for Updates",
+      upgradeBtn: "One-Click Upgrade",
       upgrading: "Upgrading…",
       upgradeConfirm: "Are you sure you want to pull and rebuild in the background?",
-      lastChecked: "Checked",
+      lastChecked: "Last Checked",
       never: "Never",
       commitsTab: "Commits",
-      pluginsTab: "Plugin Manager",
-      logsTab: "Logs",
-      noCommits: "No commits found",
-      noPlugins: "No 3rd-party plugins found",
+      pluginsTab: "Plugins",
+      logsTab: "Upgrade Logs",
+      noCommits: "No commits available",
+      noPlugins: "No plugins found",
       aligned: "0 (Aligned)",
-      behindMsg: "{count} behind",
+      behindMsg: "{count} commits behind",
       enabled: "Enabled",
       disabled: "Disabled",
       builtin: "Built-in",
@@ -81,63 +91,78 @@ window.__ModuleLoader__.load({
       uninstall: "Uninstall",
       uninstallConfirm: "Are you sure you want to uninstall {name}?",
       uninstallSuccess: "Plugin {name} uninstalled successfully!",
-      restartServer: "Restart to Apply",
+      restartServer: "Restart Service",
       restarting: "Restarting…",
-      restartPrompt: "Plugin configuration changed. Restart the Web server to take effect.",
-      actionFailed: "Action failed: {message}",
+      restartPrompt: "Plugin configuration changed. Please restart Web server to apply.",
+      upgradedReload: "Upgrade completed! Reloading…",
+      upgradeFailed: "Upgrade failed, please inspect logs",
+      upgradeSuccessRestart: "Upgrade completed! Restart the service to apply the new version.",
+      phaseStash: "Stashing local changes",
+      phasePull: "Pulling upstream updates",
+      phaseUnstash: "Restoring local changes",
+      phaseInstall: "Installing dependencies",
+      phaseBuild: "Building harness packages",
     };
 
-    function RefreshIconSvg(props) {
+    // SVG Icons
+    function SystemManageIconSvg(props) {
       return jsx("svg", {
         fill: "none",
         viewBox: "0 0 24 24",
         stroke: "currentColor",
-        style: { width: 14, height: 14, flexShrink: 0, ...props.style },
-        children: jsx("path", {
-          strokeLinecap: "round",
-          strokeLinejoin: "round",
-          strokeWidth: 2,
-          d: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15",
-        }),
+        style: { width: 16, height: 16, flexShrink: 0, color: "var(--dsw-alias-brand-primary, #60a5fa)", ...props.style },
+        children: [
+          jsx("rect", { x: "2", y: "3", width: "20", height: "14", rx: "2", strokeWidth: 2 }),
+          jsx("line", { x1: "8", y1: "21", x2: "16", y2: "21", strokeWidth: 2 }),
+          jsx("line", { x1: "12", y1: "17", x2: "12", y2: "21", strokeWidth: 2 }),
+        ],
       });
     }
 
-    function UpgradeIconSvg(props) {
+    function RefreshIconSvg({ spinning }) {
       return jsx("svg", {
         fill: "none",
         viewBox: "0 0 24 24",
         stroke: "currentColor",
-        style: { width: 13, height: 13, flexShrink: 0, ...props.style },
-        children: jsx("path", {
-          strokeLinecap: "round",
-          strokeLinejoin: "round",
-          strokeWidth: 2,
-          d: "M7 11l5-5m0 0l5 5m-5-5v12",
-        }),
+        style: {
+          width: 14,
+          height: 14,
+          animation: spinning ? "dsh-spin 1s linear infinite" : "none",
+        },
+        children: [
+          jsx("path", {
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            strokeWidth: 2,
+            d: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15",
+          }),
+        ],
       });
     }
 
-    function TrashIconSvg(props) {
+    function PluginIconSvg() {
       return jsx("svg", {
         fill: "none",
         viewBox: "0 0 24 24",
         stroke: "currentColor",
-        style: { width: 12, height: 12, flexShrink: 0, ...props.style },
-        children: jsx("path", {
-          strokeLinecap: "round",
-          strokeLinejoin: "round",
-          strokeWidth: 2,
-          d: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
-        }),
+        style: { width: 13, height: 13 },
+        children: [
+          jsx("path", {
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            strokeWidth: 2,
+            d: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4",
+          }),
+        ],
       });
     }
 
-    function GitCommitIconSvg(props) {
+    function GitCommitIconSvg() {
       return jsx("svg", {
         fill: "none",
         viewBox: "0 0 24 24",
         stroke: "currentColor",
-        style: { width: 13, height: 13, flexShrink: 0, ...props.style },
+        style: { width: 13, height: 13 },
         children: [
           jsx("circle", { cx: "12", cy: "12", r: "3", strokeWidth: 2 }),
           jsx("line", { x1: "3", y1: "12", x2: "9", y2: "12", strokeWidth: 2 }),
@@ -146,216 +171,285 @@ window.__ModuleLoader__.load({
       });
     }
 
-    function PluginIconSvg(props) {
+    function UpgradeIconSvg() {
       return jsx("svg", {
         fill: "none",
         viewBox: "0 0 24 24",
         stroke: "currentColor",
-        style: { width: 13, height: 13, flexShrink: 0, ...props.style },
-        children: jsx("path", {
-          strokeLinecap: "round",
-          strokeLinejoin: "round",
-          strokeWidth: 2,
-          d: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4",
-        }),
+        style: { width: 13, height: 13 },
+        children: [
+          jsx("path", {
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            strokeWidth: 2,
+            d: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12",
+          }),
+        ],
       });
     }
 
-    function RestartIconSvg(props) {
+    function TrashIconSvg() {
       return jsx("svg", {
         fill: "none",
         viewBox: "0 0 24 24",
         stroke: "currentColor",
-        style: { width: 12, height: 12, flexShrink: 0, ...props.style },
-        children: jsx("path", {
-          strokeLinecap: "round",
-          strokeLinejoin: "round",
-          strokeWidth: 2,
-          d: "M13 10V3L4 14h7v7l9-11h-7z",
-        }),
+        style: { width: 12, height: 12 },
+        children: [
+          jsx("path", {
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            strokeWidth: 2,
+            d: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
+          }),
+        ],
       });
     }
 
-    function formatTime(isoStr) {
-      if (!isoStr) return "";
-      try {
-        const d = new Date(isoStr);
-        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      } catch {
-        return isoStr;
-      }
+    function RestartIconSvg() {
+      return jsx("svg", {
+        fill: "none",
+        viewBox: "0 0 24 24",
+        stroke: "currentColor",
+        style: { width: 12, height: 12 },
+        children: [
+          jsx("path", {
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            strokeWidth: 2,
+            d: "M13 10V3L4 14h7v7l9-11h-7z",
+          }),
+        ],
+      });
     }
 
-    function UpdateCheckerCard(props) {
+    if (typeof document !== "undefined" && !document.getElementById("dsh-spin-style")) {
+      const s = document.createElement("style");
+      s.id = "dsh-spin-style";
+      s.textContent = "@keyframes dsh-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }";
+      document.head.appendChild(s);
+    }
+
+    function UpdateCheckerCard({ t }) {
       const [open, setOpen] = useState(false);
       const [data, setData] = useState(null);
       const [checking, setChecking] = useState(false);
       const [upgrading, setUpgrading] = useState(false);
+      const [upgradePhase, setUpgradePhase] = useState(null);
       const [restarting, setRestarting] = useState(false);
-      const [actionMsg, setActionMsg] = useState(null);
       const [activeTab, setActiveTab] = useState("plugins");
       const [logs, setLogs] = useState("");
-
-      // Dynamic bilingual translation helper
-      const t = useCallback((key, params = {}) => {
-        let text = (typeof props.t === "function" ? props.t(key) : null);
-        if (!text || text === key) {
-          // Detect current locale
-          const lang = (typeof navigator !== "undefined" && navigator.language) || "zh";
-          const dict = lang.startsWith("en") ? en : zh;
-          text = dict[key] || zh[key] || en[key] || key;
-        }
-        for (const [k, v] of Object.entries(params)) {
-          text = text.replace(new RegExp(`\\{${k}\\}`, "g"), String(v));
-        }
-        return text;
-      }, [props.t]);
+      const [actionMsg, setActionMsg] = useState(null);
+      const logsRef = React.useRef(null);
 
       const fetchStatus = useCallback(async () => {
         try {
           const res = await fetch("/api/update-checker/status");
           if (res.ok) {
-            const body = await res.json();
-            if (body.ok && body.data) {
-              setData(body.data);
-              setUpgrading(Boolean(body.data.isUpgrading));
-            }
+            const json = await res.json();
+            setData(json.data || json);
           }
-        } catch (err) {
-          console.error("Failed to fetch update status:", err);
+        } catch (e) {
+          console.warn("[dsh-plugin-update-checker] status fetch failed:", e);
+        }
+      }, []);
+
+      // The log endpoint answers text/plain — never parse it as JSON.
+      const fetchLogs = useCallback(async () => {
+        try {
+          const res = await fetch("/api/update-checker/log");
+          if (res.ok) {
+            setLogs(await res.text());
+          }
+        } catch (e) {
+          console.warn("[dsh-plugin-update-checker] logs fetch failed:", e);
         }
       }, []);
 
       useEffect(() => {
         fetchStatus();
-        const timer = setInterval(fetchStatus, 30000);
+        const timer = setInterval(fetchStatus, 60000);
         return () => clearInterval(timer);
       }, [fetchStatus]);
 
-      const handleCheckNow = async (e) => {
-        e?.stopPropagation?.();
-        if (checking) return;
+      // Keep the streaming log pinned to the newest line.
+      useEffect(() => {
+        const el = logsRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      }, [logs]);
+
+      const handleCheck = async (e) => {
+        if (e) e.stopPropagation();
         setChecking(true);
         try {
           const res = await fetch("/api/update-checker/check", { method: "POST" });
           if (res.ok) {
-            const body = await res.json();
-            if (body.ok && body.data) {
-              setData(body.data);
-            }
+            const json = await res.json();
+            setData(json.data || json);
           }
-        } catch (err) {
-          console.error("Check failed:", err);
+        } catch (e) {
+          console.warn("[dsh-plugin-update-checker] check failed:", e);
         } finally {
           setChecking(false);
         }
       };
 
+      const PHASE_LOCALE_KEY = {
+        stash: "phaseStash",
+        pull: "phasePull",
+        unstash: "phaseUnstash",
+        install: "phaseInstall",
+        build: "phaseBuild",
+      };
+
       const handleUpgrade = async (e) => {
-        e?.stopPropagation?.();
+        if (e) e.stopPropagation();
         if (!confirm(t("upgradeConfirm"))) return;
         setUpgrading(true);
+        setUpgradePhase(null);
+        setLogs("");
+        setActionMsg(null);
         setActiveTab("logs");
         try {
           const res = await fetch("/api/update-checker/upgrade", { method: "POST" });
-          if (res.ok) {
-            fetchLogs();
+          if (!res.ok) {
+            let message = t("upgradeFailed");
+            try {
+              const j = await res.json();
+              if (j && j.message) message = j.message;
+            } catch {}
+            setActionMsg({ type: "error", text: message });
+            setUpgrading(false);
+            return;
           }
-        } catch (err) {
-          console.error("Upgrade trigger failed:", err);
+
+          // Poll the lightweight status endpoint until the server reports the
+          // upgrade process has really finished (not a blind timer).
+          const startedAt = Date.now();
+          const POLL_MS = 1200;
+          const MAX_MS = 20 * 60 * 1000;
+          const timer = setInterval(async () => {
+            if (Date.now() - startedAt > MAX_MS) {
+              clearInterval(timer);
+              setUpgrading(false);
+              setUpgradePhase(null);
+              setActionMsg({ type: "error", text: t("upgradeFailed") });
+              return;
+            }
+            try {
+              const sres = await fetch("/api/update-checker/upgrade/status");
+              if (!sres.ok) return;
+              const json = await sres.json();
+              const st = json.data || json;
+              if (st.tail) setLogs(st.tail);
+              if (st.running) {
+                const key = PHASE_LOCALE_KEY[st.phase];
+                setUpgradePhase(key ? t(key) : st.phaseLabel || null);
+                return;
+              }
+              clearInterval(timer);
+              setUpgrading(false);
+              setUpgradePhase(null);
+              fetchStatus();
+              fetchLogs();
+              const ok = st.result ? st.result.success === true : false;
+              setActionMsg(
+                ok
+                  ? { type: "info", text: t("upgradeSuccessRestart") }
+                  : { type: "error", text: t("upgradeFailed") }
+              );
+            } catch {}
+          }, POLL_MS);
+        } catch (e) {
+          console.warn("[dsh-plugin-update-checker] upgrade failed:", e);
+          setActionMsg({ type: "error", text: t("upgradeFailed") });
+          setUpgrading(false);
+          setUpgradePhase(null);
         }
       };
 
-      const handleTogglePlugin = async (p, e) => {
-        e?.stopPropagation?.();
-        const targetState = !p.enabled;
+      const handleTogglePlugin = async (plugin, e) => {
+        if (e) e.stopPropagation();
         try {
           const res = await fetch("/api/plugins/toggle", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pluginId: p.id, enabled: targetState }),
+            body: JSON.stringify({ pluginId: plugin.id || plugin.name, enabled: !plugin.enabled }),
           });
-          const body = await res.json();
-          if (body.ok) {
-            fetchStatus();
-            setActionMsg({ type: "info", text: t("restartPrompt") });
-          } else {
-            setActionMsg({ type: "error", text: t("actionFailed", { message: body.error }) });
+          if (res.ok) {
+            await fetchStatus();
+            setActionMsg({ type: "warn", text: t("restartPrompt") });
           }
-        } catch (err) {
-          setActionMsg({ type: "error", text: t("actionFailed", { message: err.message }) });
+        } catch (e) {
+          console.warn("[dsh-plugin-update-checker] plugin toggle failed:", e);
         }
       };
 
-      const handleUninstallPlugin = async (p, e) => {
-        e?.stopPropagation?.();
-        const msg = t("uninstallConfirm", { name: p.name });
-        if (!confirm(msg)) return;
-
+      const handleUninstallPlugin = async (plugin, e) => {
+        if (e) e.stopPropagation();
+        const pName = plugin.id || plugin.name;
+        if (!confirm(t("uninstallConfirm", { name: pName }))) return;
         try {
           const res = await fetch("/api/plugins/uninstall", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pluginId: p.id }),
+            body: JSON.stringify({ pluginId: pName }),
           });
-          const body = await res.json();
-          if (body.ok) {
-            fetchStatus();
-            setActionMsg({ type: "success", text: t("uninstallSuccess", { name: p.name }) });
-          } else {
-            setActionMsg({ type: "error", text: t("actionFailed", { message: body.error }) });
+          if (res.ok) {
+            await fetchStatus();
+            setActionMsg({ type: "warn", text: t("uninstallSuccess", { name: pName }) + " " + t("restartPrompt") });
           }
-        } catch (err) {
-          setActionMsg({ type: "error", text: t("actionFailed", { message: err.message }) });
+        } catch (e) {
+          console.warn("[dsh-plugin-update-checker] plugin uninstall failed:", e);
         }
       };
 
       const handleRestartServer = async (e) => {
-        e?.stopPropagation?.();
+        if (e) e.stopPropagation();
         setRestarting(true);
         try {
           await fetch("/api/plugins/restart", { method: "POST" });
           setTimeout(() => {
             window.location.reload();
           }, 3500);
-        } catch {
+        } catch (e) {
+          console.warn("[dsh-plugin-update-checker] restart request sent");
           setTimeout(() => {
             window.location.reload();
-          }, 3500);
+          }, 4000);
         }
-      };
-
-      const fetchLogs = async () => {
-        try {
-          const res = await fetch("/api/update-checker/log");
-          if (res.ok) {
-            const text = await res.text();
-            setLogs(text);
-          }
-        } catch {}
       };
 
       const core = data?.core;
       const plugins = data?.plugins || [];
+      const recentCommits = data?.recentCommits || core?.recentCommits || [];
       const hasUpdate = core?.hasUpdate;
       const behindCount = core?.behindCount || 0;
+      const lastCheckedTime = data?.lastChecked || core?.lastChecked;
+
+      const formatTime = (iso) => {
+        if (!iso) return t("never");
+        try {
+          const d = new Date(iso);
+          return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        } catch (e) {
+          return iso;
+        }
+      };
 
       return jsx("li", {
         style: {
           listStyle: "none",
-          border: "1px solid " + (open ? "var(--dsw-alias-label-dimmed, #4b5563)" : "var(--dsw-alias-border-l2, #333)"),
+          border: "1px solid " + (open ? "var(--dsw-alias-label-dimmed, rgba(120,120,120,0.3))" : "var(--dsw-alias-border-l2, rgba(0,0,0,0.08))"),
           borderRadius: "12px",
-          background: open ? "var(--dsw-alias-bg-layer-2, #1e1e1e)" : "var(--dsw-alias-bg-layer-3, #242424)",
+          background: open ? "var(--dsw-alias-bg-layer-2, rgba(255,255,255,0.7))" : "var(--dsw-alias-bg-layer-3, rgba(255,255,255,0.4))",
           transition: "border-color .16s, background .16s",
-          margin: 0,
         },
         children: jsxs("div", {
           children: [
-            // Standard Official DSH Header
+            // Header Bar
             jsxs("button", {
               type: "button",
               onClick: () => setOpen(!open),
-              "aria-expanded": open,
               style: {
                 width: "100%",
                 appearance: "none",
@@ -372,100 +466,90 @@ window.__ModuleLoader__.load({
                 borderRadius: "12px",
               },
               children: [
-                // Clean Title & Description (No icon in front of title!)
                 jsxs("span", {
-                  style: {
-                    flex: 1,
-                    minWidth: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "4px",
-                  },
+                  style: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" },
                   children: [
-                    jsx("span", {
+                    jsxs("span", {
                       style: {
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "8px",
                         fontSize: "15px",
                         fontWeight: "600",
                         lineHeight: 1.4,
-                        color: "var(--dsw-alias-label-primary, #f3f4f6)",
+                        color: "var(--dsw-alias-label-primary, #0f172a)",
                       },
-                      children: t("title"),
+                      children: [jsx(SystemManageIconSvg, {}), jsx("span", { children: t("title") })],
                     }),
                     jsx("span", {
-                      style: {
-                        fontSize: "13px",
-                        lineHeight: 1.5,
-                        color: "var(--dsw-alias-label-tertiary, #9ca3af)",
-                      },
+                      style: { fontSize: "13px", lineHeight: 1.5, color: "var(--dsw-alias-label-tertiary, #64748b)" },
                       children: t("description"),
                     }),
                   ],
                 }),
-
-                // Right Status Badge
                 hasUpdate
-                  ? jsxs("span", {
+                  ? jsx("span", {
                       style: {
                         flex: "none",
                         borderRadius: "999px",
-                        padding: "2px 10px",
+                        padding: "1px 8px",
                         fontSize: "11px",
-                        lineHeight: "16px",
+                        lineHeight: "17px",
                         fontWeight: "500",
                         whiteSpace: "nowrap",
-                        background: "rgba(255, 152, 0, 0.15)",
-                        color: "#ff9800",
-                        border: "1px solid rgba(255, 152, 0, 0.3)",
                         display: "inline-flex",
                         alignItems: "center",
                         gap: "5px",
+                        background: "rgba(255, 152, 0, 0.15)",
+                        color: "#ea580c",
+                        border: "1px solid rgba(255, 152, 0, 0.3)",
                       },
                       children: [
                         jsx("span", {
                           style: {
-                            width: "6px",
-                            height: "6px",
+                            width: 6,
+                            height: 6,
                             borderRadius: "50%",
-                            background: "#ff9800",
+                            background: "#ea580c",
+                            display: "inline-block",
                           },
                         }),
-                        t("behindMsg", { count: behindCount }),
+                        jsx("span", { children: t("updateAvailable") }),
                       ],
                     })
-                  : jsxs("span", {
+                  : jsx("span", {
                       style: {
                         flex: "none",
                         borderRadius: "999px",
-                        padding: "2px 10px",
+                        padding: "1px 8px",
                         fontSize: "11px",
-                        lineHeight: "16px",
+                        lineHeight: "17px",
                         fontWeight: "500",
                         whiteSpace: "nowrap",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "5px",
                         background: "rgba(16, 185, 129, 0.15)",
                         color: "#10b981",
                         border: "1px solid rgba(16, 185, 129, 0.3)",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "5px",
                       },
                       children: [
                         jsx("span", {
                           style: {
-                            width: "6px",
-                            height: "6px",
+                            width: 6,
+                            height: 6,
                             borderRadius: "50%",
                             background: "#10b981",
+                            display: "inline-block",
                           },
                         }),
-                        t("upToDate"),
+                        jsx("span", { children: t("upToDate") }),
                       ],
                     }),
-
-                // Chevron icon with smooth rotation
                 jsx(IconChevronDownOutline14, {
                   style: {
                     flex: "none",
-                    color: "var(--dsw-alias-label-tertiary, #9ca3af)",
+                    color: "var(--dsw-alias-label-tertiary, #64748b)",
                     transform: open ? "rotate(180deg)" : "rotate(0deg)",
                     transition: "transform .16s",
                   },
@@ -473,19 +557,20 @@ window.__ModuleLoader__.load({
               ],
             }),
 
-            // Standard Body
+            // Expanded Body Panel
             open
               ? jsxs("div", {
                   style: {
-                    borderTop: "1px solid var(--dsw-alias-border-l2, #333)",
+                    borderTop: "1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.08))",
                     margin: "0 16px",
-                    padding: "14px 0 16px 0",
+                    paddingTop: "14px",
+                    paddingBottom: "14px",
                     display: "flex",
                     flexDirection: "column",
                     gap: "12px",
                   },
                   children: [
-                    // 4-Column Metrics Bar with Refresh Icon Button
+                    // Single Row 4-Column Metric Cards (Guaranteed 1 row on all screen widths)
                     jsxs("div", {
                       style: {
                         display: "grid",
@@ -493,210 +578,207 @@ window.__ModuleLoader__.load({
                         gap: "8px",
                       },
                       children: [
-                        // 1. Current Version
+                        // Card 1: Current Version
                         jsxs("div", {
                           style: {
-                            background: "rgba(255, 255, 255, 0.03)",
-                            border: "1px solid var(--dsw-alias-border-l1, rgba(255, 255, 255, 0.06))",
+                            padding: "8px 10px",
                             borderRadius: "8px",
-                            padding: "8px 12px",
+                            background: "var(--dsw-alias-bg-layer-1, rgba(0, 0, 0, 0.03))",
+                            border: "1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08))",
                             minWidth: 0,
                           },
                           children: [
                             jsx("div", {
-                              style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #888)", marginBottom: "3px" },
+                              style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #64748b)", marginBottom: "3px", whiteSpace: "nowrap" },
                               children: t("currentVersion"),
                             }),
                             jsxs("div", {
                               style: {
-                                fontSize: "12px",
+                                fontSize: "13px",
                                 fontWeight: "600",
-                                color: "var(--dsw-alias-label-primary, #fff)",
+                                color: "var(--dsw-alias-label-primary, #0f172a)",
                                 display: "flex",
                                 alignItems: "center",
                                 gap: "4px",
-                                whiteSpace: "nowrap",
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
                               },
                               children: [
-                                jsx("span", { children: core?.currentVersion || "0.1.0" }),
+                                jsx("span", { children: core?.currentVersion || "0.1.0-rc.8" }),
                                 core?.currentCommit
                                   ? jsx("span", {
                                       style: {
                                         fontSize: "10px",
+                                        fontWeight: "normal",
+                                        fontFamily: "monospace",
+                                        background: "var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))",
                                         padding: "1px 4px",
                                         borderRadius: "3px",
-                                        background: "rgba(255, 255, 255, 0.08)",
-                                        fontFamily: "monospace",
-                                        color: "var(--dsw-alias-label-secondary, #aaa)",
+                                        color: "var(--dsw-alias-label-secondary, #475569)",
                                       },
-                                      children: core.currentCommit,
+                                      children: core.currentCommit.slice(0, 6),
                                     })
                                   : null,
                               ],
                             }),
                           ],
                         }),
-                        // 2. Latest Upstream
+
+                        // Card 2: Remote Latest
                         jsxs("div", {
                           style: {
-                            background: "rgba(255, 255, 255, 0.03)",
-                            border: "1px solid var(--dsw-alias-border-l1, rgba(255, 255, 255, 0.06))",
+                            padding: "8px 10px",
                             borderRadius: "8px",
-                            padding: "8px 12px",
+                            background: "var(--dsw-alias-bg-layer-1, rgba(0, 0, 0, 0.03))",
+                            border: "1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08))",
                             minWidth: 0,
                           },
                           children: [
                             jsx("div", {
-                              style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #888)", marginBottom: "3px" },
+                              style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #64748b)", marginBottom: "3px", whiteSpace: "nowrap" },
                               children: t("latestVersion"),
                             }),
                             jsxs("div", {
                               style: {
-                                fontSize: "12px",
+                                fontSize: "13px",
                                 fontWeight: "600",
-                                color: "var(--dsw-alias-label-primary, #fff)",
+                                color: "var(--dsw-alias-label-primary, #0f172a)",
                                 display: "flex",
                                 alignItems: "center",
                                 gap: "4px",
-                                whiteSpace: "nowrap",
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
                               },
                               children: [
-                                jsx("span", { children: core?.latestVersion || core?.currentVersion || "0.1.0" }),
-                                core?.latestCommit
+                                jsx("span", { children: core?.remoteVersion || core?.currentVersion || "0.1.0-rc.8" }),
+                                core?.remoteCommit
                                   ? jsx("span", {
                                       style: {
                                         fontSize: "10px",
+                                        fontWeight: "normal",
+                                        fontFamily: "monospace",
+                                        background: "var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))",
                                         padding: "1px 4px",
                                         borderRadius: "3px",
-                                        background: "rgba(255, 255, 255, 0.08)",
-                                        fontFamily: "monospace",
-                                        color: "var(--dsw-alias-label-secondary, #aaa)",
+                                        color: "var(--dsw-alias-label-secondary, #475569)",
                                       },
-                                      children: core.latestCommit,
+                                      children: core.remoteCommit.slice(0, 6),
                                     })
                                   : null,
                               ],
                             }),
                           ],
                         }),
-                        // 3. Status
+
+                        // Card 3: Status
                         jsxs("div", {
                           style: {
-                            background: "rgba(255, 255, 255, 0.03)",
-                            border: "1px solid var(--dsw-alias-border-l1, rgba(255, 255, 255, 0.06))",
+                            padding: "8px 10px",
                             borderRadius: "8px",
-                            padding: "8px 12px",
+                            background: "var(--dsw-alias-bg-layer-1, rgba(0, 0, 0, 0.03))",
+                            border: "1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08))",
                             minWidth: 0,
                           },
                           children: [
                             jsx("div", {
-                              style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #888)", marginBottom: "3px" },
+                              style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #64748b)", marginBottom: "3px", whiteSpace: "nowrap" },
                               children: t("status"),
                             }),
                             jsx("div", {
                               style: {
-                                fontSize: "12px",
+                                fontSize: "13px",
                                 fontWeight: "600",
-                                color: behindCount > 0 ? "#ff9800" : "#10b981",
-                                whiteSpace: "nowrap",
+                                color: behindCount > 0 ? "#ea580c" : "#10b981",
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
                               },
                               children: behindCount > 0 ? t("behindMsg", { count: behindCount }) : t("aligned"),
                             }),
                           ],
                         }),
-                        // 4. Last Checked + Card-Right Refresh SVG Icon
+
+                        // Card 4: Last Checked + Check Button
                         jsxs("div", {
                           style: {
-                            background: "rgba(255, 255, 255, 0.03)",
-                            border: "1px solid var(--dsw-alias-border-l1, rgba(255, 255, 255, 0.06))",
+                            padding: "8px 10px",
                             borderRadius: "8px",
-                            padding: "8px 12px",
-                            minWidth: 0,
+                            background: "var(--dsw-alias-bg-layer-1, rgba(0, 0, 0, 0.03))",
+                            border: "1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08))",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "space-between",
-                            gap: "6px",
+                            gap: "4px",
+                            minWidth: 0,
                           },
                           children: [
                             jsxs("div", {
-                              style: { minWidth: 0, overflow: "hidden" },
+                              style: { overflow: "hidden", minWidth: 0 },
                               children: [
                                 jsx("div", {
-                                  style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #888)", marginBottom: "3px" },
+                                  style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #64748b)", marginBottom: "3px", whiteSpace: "nowrap" },
                                   children: t("lastChecked"),
                                 }),
                                 jsx("div", {
-                                  style: {
-                                    fontSize: "12px",
-                                    fontWeight: "500",
-                                    color: "var(--dsw-alias-label-primary, #fff)",
-                                    whiteSpace: "nowrap",
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                  },
-                                  children: data?.lastChecked ? formatTime(data.lastChecked) : t("never"),
+                                  style: { fontSize: "12px", color: "var(--dsw-alias-label-primary, #0f172a)", fontWeight: "500", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+                                  children: formatTime(lastCheckedTime),
                                 }),
                               ],
                             }),
-                            // Small Interactive SVG Refresh Icon
                             jsx("button", {
                               type: "button",
                               disabled: checking,
-                              onClick: handleCheckNow,
+                              onClick: handleCheck,
                               title: t("checkBtn"),
                               style: {
-                                padding: "5px",
-                                borderRadius: "4px",
-                                border: "1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.12))",
-                                background: "rgba(255, 255, 255, 0.06)",
-                                color: checking ? "#ff9800" : "#60a5fa",
+                                padding: "4px 5px",
+                                borderRadius: "6px",
+                                border: "1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.12))",
+                                background: "var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.04))",
+                                color: "var(--dsw-alias-brand-primary, #2563eb)",
                                 cursor: checking ? "default" : "pointer",
-                                opacity: checking ? 0.7 : 1,
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
                                 flexShrink: 0,
                               },
-                              children: jsx(RefreshIconSvg, {
-                                style: {
-                                  transform: checking ? "rotate(180deg)" : "none",
-                                  transition: "transform 0.4s ease",
-                                },
-                              }),
+                              children: jsx(RefreshIconSvg, { spinning: checking }),
                             }),
                           ],
                         }),
                       ],
                     }),
 
-                    // Action feedback banner
+                    // Action Banner (e.g. Restart prompt)
                     actionMsg
                       ? jsxs("div", {
                           style: {
-                            padding: "8px 12px",
-                            borderRadius: "6px",
-                            fontSize: "12px",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "space-between",
-                            gap: "8px",
+                            padding: "8px 12px",
+                            borderRadius: "8px",
                             background:
-                              actionMsg.type === "success"
-                                ? "rgba(16, 185, 129, 0.15)"
+                              actionMsg.type === "warn"
+                                ? "rgba(255, 152, 0, 0.12)"
                                 : actionMsg.type === "info"
-                                ? "rgba(59, 130, 246, 0.15)"
-                                : "rgba(239, 68, 68, 0.15)",
+                                ? "rgba(59, 130, 246, 0.12)"
+                                : "rgba(239, 68, 68, 0.12)",
+                            border:
+                              "1px solid " +
+                              (actionMsg.type === "warn"
+                                ? "rgba(255, 152, 0, 0.3)"
+                                : actionMsg.type === "info"
+                                ? "rgba(59, 130, 246, 0.3)"
+                                : "rgba(239, 68, 68, 0.3)"),
+                            fontSize: "12px",
                             color:
-                              actionMsg.type === "success"
-                                ? "#10b981"
+                              actionMsg.type === "warn"
+                                ? "#ea580c"
                                 : actionMsg.type === "info"
-                                ? "#60a5fa"
+                                ? "#2563eb"
                                 : "#ef4444",
                           },
                           children: [
@@ -706,11 +788,11 @@ window.__ModuleLoader__.load({
                               disabled: restarting,
                               onClick: handleRestartServer,
                               style: {
-                                padding: "3px 10px",
+                                padding: "4px 10px",
                                 borderRadius: "4px",
                                 border: "none",
                                 background: "#3b82f6",
-                                color: "#fff",
+                                color: "#ffffff",
                                 fontSize: "11px",
                                 fontWeight: "500",
                                 cursor: restarting ? "default" : "pointer",
@@ -740,8 +822,8 @@ window.__ModuleLoader__.load({
                                 padding: "5px 12px",
                                 borderRadius: "6px",
                                 border: "none",
-                                background: activeTab === "plugins" ? "rgba(59, 130, 246, 0.2)" : "transparent",
-                                color: activeTab === "plugins" ? "#60a5fa" : "var(--dsw-alias-label-secondary, #999)",
+                                background: activeTab === "plugins" ? "rgba(59, 130, 246, 0.15)" : "transparent",
+                                color: activeTab === "plugins" ? "var(--dsw-alias-brand-primary, #2563eb)" : "var(--dsw-alias-label-secondary, #64748b)",
                                 cursor: "pointer",
                                 fontSize: "12px",
                                 fontWeight: activeTab === "plugins" ? "600" : "400",
@@ -758,8 +840,8 @@ window.__ModuleLoader__.load({
                                 padding: "5px 12px",
                                 borderRadius: "6px",
                                 border: "none",
-                                background: activeTab === "commits" ? "rgba(59, 130, 246, 0.2)" : "transparent",
-                                color: activeTab === "commits" ? "#60a5fa" : "var(--dsw-alias-label-secondary, #999)",
+                                background: activeTab === "commits" ? "rgba(59, 130, 246, 0.15)" : "transparent",
+                                color: activeTab === "commits" ? "var(--dsw-alias-brand-primary, #2563eb)" : "var(--dsw-alias-label-secondary, #64748b)",
                                 cursor: "pointer",
                                 fontSize: "12px",
                                 fontWeight: activeTab === "commits" ? "600" : "400",
@@ -780,8 +862,8 @@ window.__ModuleLoader__.load({
                                     padding: "5px 12px",
                                     borderRadius: "6px",
                                     border: "none",
-                                    background: activeTab === "logs" ? "rgba(59, 130, 246, 0.2)" : "transparent",
-                                    color: activeTab === "logs" ? "#60a5fa" : "var(--dsw-alias-label-secondary, #999)",
+                                    background: activeTab === "logs" ? "rgba(59, 130, 246, 0.15)" : "transparent",
+                                    color: activeTab === "logs" ? "var(--dsw-alias-brand-primary, #2563eb)" : "var(--dsw-alias-label-secondary, #64748b)",
                                     cursor: "pointer",
                                     fontSize: "12px",
                                     fontWeight: activeTab === "logs" ? "600" : "400",
@@ -810,7 +892,7 @@ window.__ModuleLoader__.load({
                                 alignItems: "center",
                                 gap: "5px",
                               },
-                              children: [jsx(UpgradeIconSvg, {}), upgrading ? t("upgrading") : t("upgradeBtn")],
+                              children: [jsx(UpgradeIconSvg, {}), upgrading ? t("upgrading") + (upgradePhase ? " · " + upgradePhase : "") : t("upgradeBtn")],
                             })
                           : null,
                       ],
@@ -820,17 +902,17 @@ window.__ModuleLoader__.load({
                     activeTab === "plugins"
                       ? jsx("div", {
                           style: {
-                            maxHeight: "260px",
+                            maxHeight: "280px",
                             overflowY: "auto",
-                            background: "rgba(0, 0, 0, 0.2)",
+                            background: "var(--dsw-alias-bg-layer-1, rgba(0, 0, 0, 0.03))",
                             borderRadius: "8px",
                             padding: "8px 12px",
-                            border: "1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.05))",
+                            border: "1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08))",
                           },
                           children:
                             plugins.length > 0
                               ? jsxs("div", {
-                                  style: { display: "flex", flexDirection: "column", gap: "8px" },
+                                  style: { display: "flex", flexDirection: "column", gap: "6px" },
                                   children: plugins.map((p, i) =>
                                     jsxs(
                                       "div",
@@ -840,25 +922,29 @@ window.__ModuleLoader__.load({
                                           alignItems: "center",
                                           justifyContent: "space-between",
                                           fontSize: "12px",
-                                          padding: "6px 0",
+                                          padding: "8px 0",
                                           borderBottom:
                                             i < plugins.length - 1
-                                              ? "1px solid rgba(255,255,255,0.04)"
+                                              ? "1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))"
                                               : "none",
                                           gap: "10px",
                                         },
                                         children: [
-                                          // Left: Name & Badges
+                                          // Left: Plugin Details
                                           jsxs("div", {
-                                            style: { minWidth: 0, flex: 1 },
+                                            style: { flex: 1, minWidth: 0 },
                                             children: [
                                               jsxs("div", {
-                                                style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "nowrap" },
+                                                style: {
+                                                  display: "flex",
+                                                  alignItems: "center",
+                                                  gap: "6px",
+                                                  fontWeight: "600",
+                                                  color: "var(--dsw-alias-label-primary, #0f172a)",
+                                                },
                                                 children: [
                                                   jsx("span", {
                                                     style: {
-                                                      fontWeight: "500",
-                                                      color: p.enabled ? "#e0e0e0" : "var(--dsw-alias-label-tertiary, #777)",
                                                       whiteSpace: "nowrap",
                                                       overflow: "hidden",
                                                       textOverflow: "ellipsis",
@@ -869,8 +955,8 @@ window.__ModuleLoader__.load({
                                                     ? jsx("span", {
                                                         style: {
                                                           fontSize: "10px",
-                                                          background: "rgba(59, 130, 246, 0.15)",
-                                                          color: "#60a5fa",
+                                                          background: "rgba(59, 130, 246, 0.12)",
+                                                          color: "var(--dsw-alias-brand-primary, #2563eb)",
                                                           padding: "1px 5px",
                                                           borderRadius: "3px",
                                                           whiteSpace: "nowrap",
@@ -881,11 +967,11 @@ window.__ModuleLoader__.load({
                                                   jsx("span", {
                                                     style: {
                                                       fontSize: "10px",
-                                                      background: "rgba(255,255,255,0.08)",
+                                                      background: "var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))",
                                                       padding: "1px 5px",
                                                       borderRadius: "3px",
                                                       fontFamily: "monospace",
-                                                      color: "var(--dsw-alias-label-secondary, #aaa)",
+                                                      color: "var(--dsw-alias-label-secondary, #475569)",
                                                       whiteSpace: "nowrap",
                                                     },
                                                     children: p.version,
@@ -896,7 +982,7 @@ window.__ModuleLoader__.load({
                                                 ? jsx("div", {
                                                     style: {
                                                       fontSize: "11px",
-                                                      color: "var(--dsw-alias-label-tertiary, #777)",
+                                                      color: "var(--dsw-alias-label-tertiary, #64748b)",
                                                       marginTop: "2px",
                                                       overflow: "hidden",
                                                       textOverflow: "ellipsis",
@@ -920,9 +1006,9 @@ window.__ModuleLoader__.load({
                                                     style: {
                                                       padding: "3px 8px",
                                                       borderRadius: "4px",
-                                                      border: "1px solid " + (p.enabled ? "rgba(16, 185, 129, 0.3)" : "rgba(255, 255, 255, 0.1)"),
-                                                      background: p.enabled ? "rgba(16, 185, 129, 0.1)" : "rgba(255, 255, 255, 0.03)",
-                                                      color: p.enabled ? "#10b981" : "var(--dsw-alias-label-tertiary, #888)",
+                                                      border: "1px solid " + (p.enabled ? "rgba(16, 185, 129, 0.3)" : "var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.12))"),
+                                                      background: p.enabled ? "rgba(16, 185, 129, 0.12)" : "var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))",
+                                                      color: p.enabled ? "#10b981" : "var(--dsw-alias-label-tertiary, #64748b)",
                                                       fontSize: "11px",
                                                       fontWeight: "500",
                                                       cursor: "pointer",
@@ -935,11 +1021,12 @@ window.__ModuleLoader__.load({
                                                       fontSize: "11px",
                                                       color: "#10b981",
                                                       padding: "3px 6px",
+                                                      fontWeight: "500",
                                                     },
                                                     children: t("enabled"),
                                                   }),
 
-                                              // Uninstall button (for 3rd-party community plugins)
+                                              // Uninstall button
                                               p.removable && !p.isSelf
                                                 ? jsxs("button", {
                                                     type: "button",
@@ -948,7 +1035,7 @@ window.__ModuleLoader__.load({
                                                     style: {
                                                       padding: "3px 8px",
                                                       borderRadius: "4px",
-                                                      border: "1px solid rgba(239, 68, 68, 0.3)",
+                                                      border: "1px solid rgba(239, 68, 68, 0.25)",
                                                       background: "rgba(239, 68, 68, 0.08)",
                                                       color: "#ef4444",
                                                       fontSize: "11px",
@@ -973,7 +1060,7 @@ window.__ModuleLoader__.load({
                               : jsx("div", {
                                   style: {
                                     fontSize: "12px",
-                                    color: "var(--dsw-alias-label-tertiary, #888)",
+                                    color: "var(--dsw-alias-label-tertiary, #64748b)",
                                     textAlign: "center",
                                     padding: "14px",
                                   },
@@ -986,18 +1073,18 @@ window.__ModuleLoader__.load({
                     activeTab === "commits"
                       ? jsx("div", {
                           style: {
-                            maxHeight: "200px",
+                            maxHeight: "220px",
                             overflowY: "auto",
-                            background: "rgba(0, 0, 0, 0.2)",
+                            background: "var(--dsw-alias-bg-layer-1, rgba(0, 0, 0, 0.03))",
                             borderRadius: "8px",
                             padding: "8px 12px",
-                            border: "1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.05))",
+                            border: "1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08))",
                           },
                           children:
-                            core?.recentCommits && core.recentCommits.length > 0
+                            recentCommits.length > 0
                               ? jsxs("div", {
                                   style: { display: "flex", flexDirection: "column", gap: "6px" },
-                                  children: core.recentCommits.map((c, i) =>
+                                  children: recentCommits.map((c, i) =>
                                     jsxs(
                                       "div",
                                       {
@@ -1006,10 +1093,10 @@ window.__ModuleLoader__.load({
                                           alignItems: "center",
                                           justifyContent: "space-between",
                                           fontSize: "12px",
-                                          padding: "3px 0",
+                                          padding: "5px 0",
                                           borderBottom:
-                                            i < core.recentCommits.length - 1
-                                              ? "1px solid rgba(255,255,255,0.04)"
+                                            i < recentCommits.length - 1
+                                              ? "1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))"
                                               : "none",
                                         },
                                         children: [
@@ -1027,8 +1114,8 @@ window.__ModuleLoader__.load({
                                               jsx("span", {
                                                 style: {
                                                   fontFamily: "monospace",
-                                                  background: "rgba(59,130,246,0.15)",
-                                                  color: "#60a5fa",
+                                                  background: "rgba(59,130,246,0.12)",
+                                                  color: "var(--dsw-alias-brand-primary, #2563eb)",
                                                   padding: "1px 5px",
                                                   borderRadius: "3px",
                                                   fontSize: "11px",
@@ -1037,7 +1124,7 @@ window.__ModuleLoader__.load({
                                               }),
                                               jsx("span", {
                                                 style: {
-                                                  color: "var(--dsw-alias-label-primary, #ddd)",
+                                                  color: "var(--dsw-alias-label-primary, #0f172a)",
                                                 },
                                                 children: c.message,
                                               }),
@@ -1046,7 +1133,7 @@ window.__ModuleLoader__.load({
                                           jsx("span", {
                                             style: {
                                               fontSize: "11px",
-                                              color: "var(--dsw-alias-label-tertiary, #777)",
+                                              color: "var(--dsw-alias-label-tertiary, #64748b)",
                                               flexShrink: 0,
                                             },
                                             children: c.date ? c.date.split(" ")[0] : "",
@@ -1060,7 +1147,7 @@ window.__ModuleLoader__.load({
                               : jsx("div", {
                                   style: {
                                     fontSize: "12px",
-                                    color: "var(--dsw-alias-label-tertiary, #888)",
+                                    color: "var(--dsw-alias-label-tertiary, #64748b)",
                                     textAlign: "center",
                                     padding: "14px",
                                   },
@@ -1072,15 +1159,16 @@ window.__ModuleLoader__.load({
                     // Tab 3: Logs View
                     activeTab === "logs"
                       ? jsx("div", {
+                          ref: logsRef,
                           style: {
                             maxHeight: "180px",
                             overflowY: "auto",
-                            background: "#111",
+                            background: "var(--dsw-alias-bg-layer-1, #0f172a)",
                             borderRadius: "8px",
                             padding: "10px",
                             fontSize: "11px",
                             fontFamily: "monospace",
-                            color: "#00e676",
+                            color: "#10b981",
                             whiteSpace: "pre-wrap",
                           },
                           children: logs || "Waiting for logs...",
