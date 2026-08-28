@@ -222,6 +222,38 @@ window.__ModuleLoader__.load({
       });
     }
 
+    function ExternalLinkIconSvg(props) {
+      return jsx("svg", {
+        fill: "none",
+        viewBox: "0 0 24 24",
+        stroke: "currentColor",
+        style: { width: 11, height: 11, display: "inline-block", verticalAlign: "middle", ...props?.style },
+        children: [
+          jsx("path", {
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            strokeWidth: 2,
+            d: "M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14",
+          }),
+        ],
+      });
+    }
+
+    function GithubIconSvg(props) {
+      return jsx("svg", {
+        viewBox: "0 0 24 24",
+        fill: "currentColor",
+        style: { width: 12, height: 12, display: "inline-block", verticalAlign: "middle", ...props?.style },
+        children: [
+          jsx("path", {
+            fillRule: "evenodd",
+            clipRule: "evenodd",
+            d: "M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z",
+          }),
+        ],
+      });
+    }
+
     if (typeof document !== "undefined" && !document.getElementById("dsh-spin-style")) {
       const s = document.createElement("style");
       s.id = "dsh-spin-style";
@@ -618,7 +650,11 @@ window.__ModuleLoader__.load({
                               children: [
                                 jsx("span", { children: core?.currentVersion || "0.1.0-rc.8" }),
                                 core?.currentCommit
-                                  ? jsx("span", {
+                                  ? jsxs("a", {
+                                      href: `https://github.com/deepseek-ai/deepseek-harness/commit/${core.currentCommit}`,
+                                      target: "_blank",
+                                      rel: "noopener noreferrer",
+                                      title: "在 GitHub 中查看当前版本提交",
                                       style: {
                                         fontSize: "10px",
                                         fontWeight: "normal",
@@ -626,9 +662,17 @@ window.__ModuleLoader__.load({
                                         background: "var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))",
                                         padding: "1px 4px",
                                         borderRadius: "3px",
-                                        color: "var(--dsw-alias-label-secondary, #475569)",
+                                        color: "var(--dsw-alias-brand-primary, #2563eb)",
+                                        textDecoration: "none",
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "2px",
+                                        cursor: "pointer",
                                       },
-                                      children: core.currentCommit.slice(0, 6),
+                                      children: [
+                                        core.currentCommit.slice(0, 6),
+                                        jsx(ExternalLinkIconSvg, { style: { width: 9, height: 9 } }),
+                                      ],
                                     })
                                   : null,
                               ],
@@ -665,7 +709,11 @@ window.__ModuleLoader__.load({
                               children: [
                                 jsx("span", { children: core?.remoteVersion || core?.currentVersion || "0.1.0-rc.8" }),
                                 core?.remoteCommit
-                                  ? jsx("span", {
+                                  ? jsxs("a", {
+                                      href: `https://github.com/deepseek-ai/deepseek-harness/commit/${core.remoteCommit}`,
+                                      target: "_blank",
+                                      rel: "noopener noreferrer",
+                                      title: "在 GitHub 中查看远程最新提交",
                                       style: {
                                         fontSize: "10px",
                                         fontWeight: "normal",
@@ -673,9 +721,17 @@ window.__ModuleLoader__.load({
                                         background: "var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))",
                                         padding: "1px 4px",
                                         borderRadius: "3px",
-                                        color: "var(--dsw-alias-label-secondary, #475569)",
+                                        color: "var(--dsw-alias-brand-primary, #2563eb)",
+                                        textDecoration: "none",
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "2px",
+                                        cursor: "pointer",
                                       },
-                                      children: core.remoteCommit.slice(0, 6),
+                                      children: [
+                                        core.remoteCommit.slice(0, 6),
+                                        jsx(ExternalLinkIconSvg, { style: { width: 9, height: 9 } }),
+                                      ],
                                     })
                                   : null,
                               ],
@@ -980,14 +1036,37 @@ window.__ModuleLoader__.load({
                                                   color: "var(--dsw-alias-label-primary, #0f172a)",
                                                 },
                                                 children: [
-                                                  jsx("span", {
-                                                    style: {
-                                                      whiteSpace: "nowrap",
-                                                      overflow: "hidden",
-                                                      textOverflow: "ellipsis",
-                                                    },
-                                                    children: p.name,
-                                                  }),
+                                                  p.repositoryUrl
+                                                    ? jsxs("a", {
+                                                        href: p.repositoryUrl,
+                                                        target: "_blank",
+                                                        rel: "noopener noreferrer",
+                                                        title: `在 GitHub 中打开 ${p.name}`,
+                                                        style: {
+                                                          whiteSpace: "nowrap",
+                                                          overflow: "hidden",
+                                                          textOverflow: "ellipsis",
+                                                          color: "var(--dsw-alias-brand-primary, #2563eb)",
+                                                          textDecoration: "none",
+                                                          display: "inline-flex",
+                                                          alignItems: "center",
+                                                          gap: "4px",
+                                                          cursor: "pointer",
+                                                        },
+                                                        children: [
+                                                          jsx(GithubIconSvg, {}),
+                                                          jsx("span", { children: p.name }),
+                                                          jsx(ExternalLinkIconSvg, { style: { width: 9, height: 9 } }),
+                                                        ],
+                                                      })
+                                                    : jsx("span", {
+                                                        style: {
+                                                          whiteSpace: "nowrap",
+                                                          overflow: "hidden",
+                                                          textOverflow: "ellipsis",
+                                                        },
+                                                        children: p.name,
+                                                      }),
                                                   p.source === "workspace"
                                                     ? jsx("span", {
                                                         style: {
@@ -1137,7 +1216,11 @@ window.__ModuleLoader__.load({
                                               : "none",
                                         },
                                         children: [
-                                          jsxs("div", {
+                                          jsxs("a", {
+                                            href: `https://github.com/deepseek-ai/deepseek-harness/commit/${c.sha}`,
+                                            target: "_blank",
+                                            rel: "noopener noreferrer",
+                                            title: `在 GitHub 中查看提交 ${c.sha}`,
                                             style: {
                                               display: "flex",
                                               alignItems: "center",
@@ -1146,9 +1229,12 @@ window.__ModuleLoader__.load({
                                               textOverflow: "ellipsis",
                                               whiteSpace: "nowrap",
                                               marginRight: "10px",
+                                              textDecoration: "none",
+                                              color: "inherit",
+                                              cursor: "pointer",
                                             },
                                             children: [
-                                              jsx("span", {
+                                              jsxs("span", {
                                                 style: {
                                                   fontFamily: "monospace",
                                                   background: "rgba(59,130,246,0.12)",
@@ -1156,8 +1242,14 @@ window.__ModuleLoader__.load({
                                                   padding: "1px 5px",
                                                   borderRadius: "3px",
                                                   fontSize: "11px",
+                                                  display: "inline-flex",
+                                                  alignItems: "center",
+                                                  gap: "3px",
                                                 },
-                                                children: c.sha,
+                                                children: [
+                                                  c.sha,
+                                                  jsx(ExternalLinkIconSvg, { style: { width: 8, height: 8 } }),
+                                                ],
                                               }),
                                               jsx("span", {
                                                 style: {

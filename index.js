@@ -238,6 +238,28 @@ function checkPluginsStatus() {
                                patchText.includes(`id: ${id}\n  disabled: true`);
             const isEnabled = (inBundles || inPatch) && !isDisabled;
 
+            let repositoryUrl = null;
+            let rawRepo = pPkg?.repository?.url || pPkg?.repository || pPkg?.homepage;
+            if (!rawRepo && existsSync(join(full, ".git"))) {
+              try {
+                const gitCfg = readFileSync(join(full, ".git", "config"), "utf8");
+                const m = gitCfg.match(/url\s*=\s*(.+)/);
+                if (m) rawRepo = m[1].trim();
+              } catch {}
+            }
+            if (typeof rawRepo === "string") {
+              rawRepo = rawRepo.trim().replace(/^git\+/, "").replace(/\.git$/, "");
+              if (rawRepo.startsWith("git@github.com:")) {
+                repositoryUrl = "https://github.com/" + rawRepo.slice("git@github.com:".length);
+              } else if (rawRepo.startsWith("github:")) {
+                repositoryUrl = "https://github.com/" + rawRepo.slice("github:".length);
+              } else if (!rawRepo.startsWith("http://") && !rawRepo.startsWith("https://") && rawRepo.includes("/") && !rawRepo.includes(":")) {
+                repositoryUrl = "https://github.com/" + rawRepo;
+              } else if (rawRepo.startsWith("http://") || rawRepo.startsWith("https://")) {
+                repositoryUrl = rawRepo;
+              }
+            }
+
             if (!pluginsMap.has(id)) {
               pluginsMap.set(id, {
                 id,
@@ -246,6 +268,7 @@ function checkPluginsStatus() {
                 path: full,
                 version: pPkg.version || "1.0.0",
                 description: pPkg.description || "",
+                repositoryUrl,
                 enabled: isEnabled,
                 isSelf,
                 removable: !isSelf,
