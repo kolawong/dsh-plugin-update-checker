@@ -22,6 +22,7 @@ export const name = "update-checker";
 export const inject = ["webServer"];
 
 const STATE_DIR_SEGMENTS = ["plugins", "dsh-plugin-update-checker"];
+let cachedPluginConfig = {};
 
 function resolveDshHome() {
   const env = process.env.DSH_HOME;
@@ -324,6 +325,76 @@ function checkPluginsStatus() {
     });
   }
 
+  // 4. Scan ~/.hindsight/ (Hindsight coding-agent daemon)
+  const hindsightDir = join(homedir(), ".hindsight", "coding-agents");
+  if (existsSync(hindsightDir)) {
+    const hindsightPkg = join(hindsightDir, "package.json");
+    if (existsSync(hindsightPkg)) {
+      try {
+        const pPkg = JSON.parse(readFileSync(hindsightPkg, "utf8"));
+        const id = "hindsight";
+        const name = "hindsight-coding-agents";
+        const repoUrl = "https://github.com/vectorize-io/hindsight";
+        if (!pluginsMap.has(id) && !pluginsMap.has(name) && !pluginsMap.has(pPkg.name)) {
+          pluginsMap.set(id, {
+            id,
+            name: "Hindsight (Coding Agents Memory)",
+            dirName: "hindsight",
+            path: hindsightDir,
+            version: pPkg.version || "0.4.3",
+            description: pPkg.description || "Reflect-only Hindsight long-term memory for coding agents",
+            repositoryUrl: repoUrl,
+            npmPackage: pPkg.name || "@vectorize-io/hindsight-coding-agents",
+            enabled: true,
+            isSelf: false,
+            removable: false,
+            source: "system-daemon",
+            profile,
+          });
+        }
+      } catch {}
+    }
+  }
+
+  // 5. Scan config.extraPlugins (from cordis.patch.yml or profile config)
+  const extraList = cachedPluginConfig?.extraPlugins;
+  if (Array.isArray(extraList)) {
+    for (const ep of extraList) {
+      if (!ep || !ep.id) continue;
+      const id = ep.id;
+      const pPath = ep.path || "";
+      let version = ep.version || "1.0.0";
+      let description = ep.description || "";
+      let repositoryUrl = ep.repo || null;
+      let npmPackage = ep.npm || null;
+      if (pPath && existsSync(join(pPath, "package.json"))) {
+        try {
+          const pPkg = JSON.parse(readFileSync(join(pPath, "package.json"), "utf8"));
+          version = pPkg.version || version;
+          description = pPkg.description || description;
+          npmPackage = npmPackage || pPkg.name;
+        } catch {}
+      }
+      if (!pluginsMap.has(id)) {
+        pluginsMap.set(id, {
+          id,
+          name: ep.name || (id === "hindsight" ? "Hindsight (Coding Agents Memory)" : id),
+          dirName: id,
+          path: pPath,
+          version,
+          description,
+          repositoryUrl,
+          npmPackage,
+          enabled: true,
+          isSelf: false,
+          removable: false,
+          source: "external",
+          profile,
+        });
+      }
+    }
+  }
+
   return Array.from(pluginsMap.values());
 }
 
@@ -555,6 +626,7 @@ async function runFullCheck() {
 }
 
 export function apply(ctx, config) {
+  cachedPluginConfig = config || {};
   loadPersistedState();
 
   // Register settings schema

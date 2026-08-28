@@ -45,6 +45,8 @@ window.__ModuleLoader__.load({
       builtin: "官方内置",
       workspace: "本地工作区",
       profile: "Profile 挂载",
+      systemDaemon: "系统服务",
+      external: "独立安装",
       uninstall: "卸载",
       uninstallConfirm: "确定要从 Profile 中卸载插件 {name} 吗？",
       uninstallSuccess: "插件 {name} 卸载成功！",
@@ -88,6 +90,8 @@ window.__ModuleLoader__.load({
       builtin: "Built-in",
       workspace: "Workspace",
       profile: "Profile",
+      systemDaemon: "Daemon",
+      external: "External",
       uninstall: "Uninstall",
       uninstallConfirm: "Are you sure you want to uninstall {name}?",
       uninstallSuccess: "Plugin {name} uninstalled successfully!",
@@ -1067,7 +1071,31 @@ window.__ModuleLoader__.load({
                                                         },
                                                         children: p.name,
                                                       }),
-                                                  p.source === "workspace"
+                                                  p.source === "system-daemon"
+                                                    ? jsx("span", {
+                                                        style: {
+                                                          fontSize: "10px",
+                                                          background: "rgba(16, 185, 129, 0.12)",
+                                                          color: "#10b981",
+                                                          padding: "1px 5px",
+                                                          borderRadius: "3px",
+                                                          whiteSpace: "nowrap",
+                                                        },
+                                                        children: t("systemDaemon"),
+                                                      })
+                                                    : p.source === "external"
+                                                    ? jsx("span", {
+                                                        style: {
+                                                          fontSize: "10px",
+                                                          background: "rgba(168, 85, 247, 0.12)",
+                                                          color: "#a855f7",
+                                                          padding: "1px 5px",
+                                                          borderRadius: "3px",
+                                                          whiteSpace: "nowrap",
+                                                        },
+                                                        children: t("external"),
+                                                      })
+                                                    : p.source === "workspace"
                                                     ? jsx("span", {
                                                         style: {
                                                           fontSize: "10px",
