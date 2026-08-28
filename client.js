@@ -229,7 +229,18 @@ window.__ModuleLoader__.load({
       document.head.appendChild(s);
     }
 
-    function UpdateCheckerCard({ t }) {
+    function UpdateCheckerCard(props) {
+      const rawT = props && typeof props.t === "function" ? props.t : null;
+      const t = (key, params) => {
+        let val = rawT ? rawT(key, params) : (zh[key] || en[key] || key);
+        if (!val) val = zh[key] || en[key] || key;
+        if (params && typeof val === "string") {
+          for (const [k, v] of Object.entries(params)) {
+            val = val.replace(new RegExp(`{${k}}`, "g"), String(v));
+          }
+        }
+        return val;
+      };
       const [open, setOpen] = useState(false);
       const [data, setData] = useState(null);
       const [checking, setChecking] = useState(false);
@@ -873,28 +884,54 @@ window.__ModuleLoader__.load({
                               : null,
                           ],
                         }),
-                        hasUpdate
-                          ? jsxs("button", {
+                        jsxs("div", {
+                          style: { display: "flex", alignItems: "center", gap: "8px" },
+                          children: [
+                            jsxs("button", {
                               type: "button",
-                              disabled: upgrading,
-                              onClick: handleUpgrade,
+                              disabled: restarting,
+                              onClick: handleRestartServer,
+                              title: t("restartServer"),
                               style: {
-                                padding: "5px 14px",
+                                padding: "5px 12px",
                                 borderRadius: "6px",
-                                border: "none",
-                                background: "#3b82f6",
-                                color: "#ffffff",
+                                border: "1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.12))",
+                                background: "var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.04))",
+                                color: "var(--dsw-alias-label-primary, #0f172a)",
                                 fontWeight: "500",
-                                cursor: upgrading ? "default" : "pointer",
-                                opacity: upgrading ? 0.6 : 1,
+                                cursor: restarting ? "default" : "pointer",
+                                opacity: restarting ? 0.6 : 1,
                                 fontSize: "12px",
                                 display: "flex",
                                 alignItems: "center",
                                 gap: "5px",
                               },
-                              children: [jsx(UpgradeIconSvg, {}), upgrading ? t("upgrading") + (upgradePhase ? " · " + upgradePhase : "") : t("upgradeBtn")],
-                            })
-                          : null,
+                              children: [jsx(RestartIconSvg, {}), restarting ? t("restarting") : t("restartServer")],
+                            }),
+                            hasUpdate
+                              ? jsxs("button", {
+                                  type: "button",
+                                  disabled: upgrading,
+                                  onClick: handleUpgrade,
+                                  style: {
+                                    padding: "5px 14px",
+                                    borderRadius: "6px",
+                                    border: "none",
+                                    background: "#3b82f6",
+                                    color: "#ffffff",
+                                    fontWeight: "500",
+                                    cursor: upgrading ? "default" : "pointer",
+                                    opacity: upgrading ? 0.6 : 1,
+                                    fontSize: "12px",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "5px",
+                                  },
+                                  children: [jsx(UpgradeIconSvg, {}), upgrading ? t("upgrading") + (upgradePhase ? " · " + upgradePhase : "") : t("upgradeBtn")],
+                                })
+                              : null,
+                          ],
+                        }),
                       ],
                     }),
 
