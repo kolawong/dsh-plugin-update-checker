@@ -1,0 +1,3 @@
+# local release tarballs / build artifacts
+.verify-pack/
+node_modules/

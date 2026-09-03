@@ -1,10 +1,11 @@
 /**
- * dsh-plugin-update-checker — Client half (Web UI Settings Card) (Version 1.3.1)
+ * dsh-plugin-update-checker — Client half (Web UI Settings Card) (Version 1.4.0)
  *
  * 100% aligned with official DSH PluginCard design specification.
  * Full reactive adaptation for Light Mode and Dark Mode.
  * Fixed 4-column single-row layout and accurate API routing.
  * Live upgrade progress: streams phase + log tail from the server.
+ * Per-plugin git update badges and one-click plugin update button.
  */
 
 window.__ModuleLoader__.load({
@@ -61,6 +62,19 @@ window.__ModuleLoader__.load({
       phaseUnstash: "恢复本地修改",
       phaseInstall: "安装依赖",
       phaseBuild: "编译内核",
+      phaseSync: "同步 Profile 依赖",
+      pluginUpToDate: "最新",
+      pluginUncheckable: "无法检查",
+      pluginUpdateBtn: "更新",
+      pluginUpdateConfirm: "确定要升级插件 {name} 吗？将执行 git stash → pull → pnpm install。",
+      pluginUpdateFailed: "插件升级失败，请查看日志",
+      reasonNoPath: "无本地目录",
+      reasonNotGit: "非 Git 安装",
+      reasonNoRemote: "未配置远端仓库",
+      reasonNoUpstream: "远端分支不存在",
+      reasonDetachedHead: "处于 detached HEAD 状态",
+      reasonGitFailed: "Git 命令执行失败",
+      reasonInspectFailed: "检查失败",
     };
 
     const en = {
@@ -106,6 +120,19 @@ window.__ModuleLoader__.load({
       phaseUnstash: "Restoring local changes",
       phaseInstall: "Installing dependencies",
       phaseBuild: "Building harness packages",
+      phaseSync: "Syncing profile dependencies",
+      pluginUpToDate: "Up to date",
+      pluginUncheckable: "Can't check",
+      pluginUpdateBtn: "Update",
+      pluginUpdateConfirm: "Upgrade plugin {name}? This runs git stash → pull → pnpm install.",
+      pluginUpdateFailed: "Plugin upgrade failed, please inspect logs",
+      reasonNoPath: "No local directory",
+      reasonNotGit: "Not a git checkout",
+      reasonNoRemote: "No remote configured",
+      reasonNoUpstream: "No upstream branch",
+      reasonDetachedHead: "Detached HEAD state",
+      reasonGitFailed: "Git command failed",
+      reasonInspectFailed: "Inspection failed",
     };
 
     // SVG Icons
@@ -346,6 +373,60 @@ window.__ModuleLoader__.load({
         unstash: "phaseUnstash",
         install: "phaseInstall",
         build: "phaseBuild",
+        sync: "phaseSync",
+      };
+
+      const GIT_REASON_LOCALE_KEY = {
+        "no-local-path": "reasonNoPath",
+        "not-a-git-checkout": "reasonNotGit",
+        "no-remote": "reasonNoRemote",
+        "no-upstream-branch": "reasonNoUpstream",
+        "detached-head": "reasonDetachedHead",
+        "git-command-failed": "reasonGitFailed",
+        "inspect-failed": "reasonInspectFailed",
+      };
+      const gitReasonText = (reason) => {
+        if (!reason) return "";
+        const key = GIT_REASON_LOCALE_KEY[reason];
+        return key ? t(key) : reason;
+      };
+
+      // Poll the lightweight status endpoint until the server reports the
+      // upgrade process has really finished (not a blind timer). Shared by
+      // core upgrades and per-plugin upgrades.
+      const startUpgradePolling = (onFinished) => {
+        const startedAt = Date.now();
+        const POLL_MS = 1200;
+        const MAX_MS = 20 * 60 * 1000;
+        const timer = setInterval(async () => {
+          if (Date.now() - startedAt > MAX_MS) {
+            clearInterval(timer);
+            setUpgrading(false);
+            setUpgradePhase(null);
+            setActionMsg({ type: "error", text: t("upgradeFailed") });
+            if (onFinished) onFinished(false);
+            return;
+          }
+          try {
+            const sres = await fetch("/api/update-checker/upgrade/status");
+            if (!sres.ok) return;
+            const json = await sres.json();
+            const st = json.data || json;
+            if (st.tail) setLogs(st.tail);
+            if (st.running) {
+              const key = PHASE_LOCALE_KEY[st.phase];
+              setUpgradePhase(key ? t(key) : st.phaseLabel || null);
+              return;
+            }
+            clearInterval(timer);
+            setUpgrading(false);
+            setUpgradePhase(null);
+            fetchStatus();
+            fetchLogs();
+            const ok = st.result ? st.result.success === true : false;
+            if (onFinished) onFinished(ok);
+          } catch {}
+        }, POLL_MS);
       };
 
       const handleUpgrade = async (e) => {
@@ -369,46 +450,57 @@ window.__ModuleLoader__.load({
             return;
           }
 
-          // Poll the lightweight status endpoint until the server reports the
-          // upgrade process has really finished (not a blind timer).
-          const startedAt = Date.now();
-          const POLL_MS = 1200;
-          const MAX_MS = 20 * 60 * 1000;
-          const timer = setInterval(async () => {
-            if (Date.now() - startedAt > MAX_MS) {
-              clearInterval(timer);
-              setUpgrading(false);
-              setUpgradePhase(null);
-              setActionMsg({ type: "error", text: t("upgradeFailed") });
-              return;
-            }
-            try {
-              const sres = await fetch("/api/update-checker/upgrade/status");
-              if (!sres.ok) return;
-              const json = await sres.json();
-              const st = json.data || json;
-              if (st.tail) setLogs(st.tail);
-              if (st.running) {
-                const key = PHASE_LOCALE_KEY[st.phase];
-                setUpgradePhase(key ? t(key) : st.phaseLabel || null);
-                return;
-              }
-              clearInterval(timer);
-              setUpgrading(false);
-              setUpgradePhase(null);
-              fetchStatus();
-              fetchLogs();
-              const ok = st.result ? st.result.success === true : false;
-              setActionMsg(
-                ok
-                  ? { type: "info", text: t("upgradeSuccessRestart") }
-                  : { type: "error", text: t("upgradeFailed") }
-              );
-            } catch {}
-          }, POLL_MS);
+          startUpgradePolling((ok) =>
+            setActionMsg(
+              ok
+                ? { type: "info", text: t("upgradeSuccessRestart") }
+                : { type: "error", text: t("upgradeFailed") }
+            )
+          );
         } catch (e) {
           console.warn("[dsh-plugin-update-checker] upgrade failed:", e);
           setActionMsg({ type: "error", text: t("upgradeFailed") });
+          setUpgrading(false);
+          setUpgradePhase(null);
+        }
+      };
+
+      const handleUpgradePlugin = async (plugin, e) => {
+        if (e) e.stopPropagation();
+        const pName = plugin.id || plugin.name;
+        if (!confirm(t("pluginUpdateConfirm", { name: pName }))) return;
+        setUpgrading(true);
+        setUpgradePhase(null);
+        setLogs("");
+        setActionMsg(null);
+        setActiveTab("logs");
+        try {
+          const res = await fetch("/api/plugins/update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pluginId: pName }),
+          });
+          if (!res.ok) {
+            let message = t("pluginUpdateFailed");
+            try {
+              const j = await res.json();
+              if (j && (j.message || j.error)) message = j.message || j.error;
+            } catch {}
+            setActionMsg({ type: "error", text: message });
+            setUpgrading(false);
+            return;
+          }
+
+          startUpgradePolling((ok) =>
+            setActionMsg(
+              ok
+                ? { type: "info", text: t("upgradeSuccessRestart") }
+                : { type: "error", text: t("pluginUpdateFailed") }
+            )
+          );
+        } catch (e) {
+          console.warn("[dsh-plugin-update-checker] plugin update failed:", e);
+          setActionMsg({ type: "error", text: t("pluginUpdateFailed") });
           setUpgrading(false);
           setUpgradePhase(null);
         }
@@ -1040,9 +1132,9 @@ window.__ModuleLoader__.load({
                                                   color: "var(--dsw-alias-label-primary, #0f172a)",
                                                 },
                                                 children: [
-                                                  p.repositoryUrl
+                                                  (p.repositoryUrl || (p.gitState && p.gitState.remoteUrl) || null)
                                                     ? jsxs("a", {
-                                                        href: p.repositoryUrl,
+                                                        href: p.repositoryUrl || (p.gitState && p.gitState.remoteUrl),
                                                         target: "_blank",
                                                         rel: "noopener noreferrer",
                                                         title: `在 GitHub 中打开 ${p.name}`,
@@ -1120,6 +1212,49 @@ window.__ModuleLoader__.load({
                                                     },
                                                     children: p.version,
                                                   }),
+                                                  // Git update badge: behind count / up to date / uncheckable reason
+                                                  p.gitState && p.gitState.hasUpdate
+                                                    ? jsxs("span", {
+                                                        style: {
+                                                          fontSize: "10px",
+                                                          background: "rgba(234, 88, 12, 0.14)",
+                                                          color: "#ea580c",
+                                                          padding: "1px 5px",
+                                                          borderRadius: "3px",
+                                                          fontWeight: "600",
+                                                          whiteSpace: "nowrap",
+                                                        },
+                                                        title: p.gitState.branch
+                                                          ? `${p.gitState.branch} · ${t("behindMsg", { count: p.gitState.behindCount || 0 })}`
+                                                          : undefined,
+                                                        children: t("behindMsg", { count: p.gitState.behindCount || 0 }),
+                                                      })
+                                                    : p.gitState && p.gitState.checkable
+                                                    ? jsx("span", {
+                                                        style: {
+                                                          fontSize: "10px",
+                                                          background: "rgba(16, 185, 129, 0.10)",
+                                                          color: "#10b981",
+                                                          padding: "1px 5px",
+                                                          borderRadius: "3px",
+                                                          whiteSpace: "nowrap",
+                                                        },
+                                                        children: t("pluginUpToDate"),
+                                                      })
+                                                    : p.gitState && !p.gitState.checkable
+                                                    ? jsx("span", {
+                                                        style: {
+                                                          fontSize: "10px",
+                                                          background: "var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))",
+                                                          color: "var(--dsw-alias-label-tertiary, #64748b)",
+                                                          padding: "1px 5px",
+                                                          borderRadius: "3px",
+                                                          whiteSpace: "nowrap",
+                                                        },
+                                                        title: gitReasonText(p.gitState.reason),
+                                                        children: t("pluginUncheckable"),
+                                                      })
+                                                    : null,
                                                 ],
                                               }),
                                               p.description
@@ -1138,10 +1273,34 @@ window.__ModuleLoader__.load({
                                             ],
                                           }),
 
-                                          // Right: Toggle & Uninstall Actions
+                                          // Right: Update & Toggle & Uninstall Actions
                                           jsxs("div", {
                                             style: { display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 },
                                             children: [
+                                              // One-click update button (git plugins with upstream updates)
+                                              p.gitState && p.gitState.hasUpdate && p.gitState.checkable && !p.isSelf
+                                                ? jsx("button", {
+                                                    type: "button",
+                                                    onClick: (e) => handleUpgradePlugin(p, e),
+                                                    title: t("pluginUpdateConfirm", { name: p.id || p.name }),
+                                                    style: {
+                                                      padding: "3px 8px",
+                                                      borderRadius: "4px",
+                                                      border: "1px solid rgba(59, 130, 246, 0.35)",
+                                                      background: "rgba(59, 130, 246, 0.12)",
+                                                      color: "var(--dsw-alias-brand-primary, #2563eb)",
+                                                      fontSize: "11px",
+                                                      fontWeight: "500",
+                                                      cursor: "pointer",
+                                                      display: "flex",
+                                                      alignItems: "center",
+                                                      gap: "4px",
+                                                      whiteSpace: "nowrap",
+                                                    },
+                                                    children: [jsx(RefreshIconSvg, {}), t("pluginUpdateBtn")],
+                                                  })
+                                                : null,
+
                                               // Toggle Enable/Disable button
                                               !p.isBuiltin
                                                 ? jsx("button", {
@@ -1478,8 +1637,11 @@ window.__ModuleLoader__.load({
         unstash: "③ 恢复本地修改",
         install: "④ 安装依赖 (pnpm install)",
         build: "⑤ 全量打包编译 (pnpm build)",
+        sync: "⑥ 同步 Profile 依赖 (pnpm install)",
       };
-      const phaseLabel = phaseNames[st.phase] || st.phaseLabel || "内核升级构建中";
+      const isPluginTarget = st.target && st.target.type === "plugin";
+      const targetTitle = isPluginTarget ? `正在升级插件 ${st.target.name || st.target.id || ""}` : "正在升级内核";
+      const phaseLabel = phaseNames[st.phase] || st.phaseLabel || (isPluginTarget ? "插件升级中" : "内核升级构建中");
 
       hudEl.innerHTML = `
         <div class="dsh-hud-pill">
@@ -1489,7 +1651,7 @@ window.__ModuleLoader__.load({
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: dsh-spin 1.5s linear infinite; color: #38bdf8;">
                 <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
-              正在升级内核
+              ${targetTitle}
             </span>
           </div>
           <span style="background: rgba(255,255,255,0.1); border-radius: 999px; padding: 2px 8px; font-size: 11px; color: #cbd5e1;">
@@ -1527,13 +1689,14 @@ window.__ModuleLoader__.load({
       hudEl.style.display = "block";
 
       const ok = st.result ? st.result.success === true : false;
+      const okTitle = st.target && st.target.type === "plugin" ? "插件升级完成！" : "升级全量编译完成！";
 
       if (ok) {
         hudEl.innerHTML = `
           <div class="dsh-hud-pill completed">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span style="color: #10b981; font-size: 14px;">🎉</span>
-              <span style="font-weight: 600; color: #fff;">升级全量编译完成！</span>
+              <span style="font-weight: 600; color: #fff;">${okTitle}</span>
             </div>
             <button id="dsh-hud-restart-btn" style="background: #10b981; border: none; color: #fff; font-weight: 600; border-radius: 999px; padding: 4px 14px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 10px rgba(16,185,129,0.4);">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

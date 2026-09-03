@@ -1,9 +1,10 @@
 /**
- * dsh-plugin-update-checker — Server half (Version 1.3.1)
+ * dsh-plugin-update-checker — Server half (Version 1.4.0)
  *
  * DeepSeek Harness Cordis plugin providing:
  * 1. Core version tracking (local Git repo vs upstream GitHub)
  * 2. Multi-source plugin discovery (profile bundles, cordis.patch.yml, ~/.dsh/plugins/, and ~/ workspace plugin projects)
+ * 3. Per-plugin git update state (branch, behindCount vs origin, remoteUrl; reason when uncheckable)
  * 3. Hides official built-in plugins from management surface
  * 4. Comprehensive plugin uninstall & toggle enable/disable
  * 5. REST API endpoints for Web UI (/api/update-checker/* and /api/plugins/*)
@@ -73,6 +74,153 @@ function safeExec(cmd, cwd = undefined, timeout = 15000) {
   } catch {
     return "";
   }
+}
+
+/** Like safeExec, but reports whether the command actually succeeded. */
+function tryExec(cmd, cwd = undefined, timeout = 15000) {
+  try {
+    return {
+      ok: true,
+      out: execSync(cmd, { cwd, timeout, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(),
+    };
+  } catch {
+    return { ok: false, out: "" };
+  }
+}
+
+/** Normalize a raw repository string (pkg.repository / git config URL) into an https GitHub URL. */
+function normalizeRepoUrl(raw) {
+  if (typeof raw !== "string") return null;
+  const url = raw.trim().replace(/^git\+/, "").replace(/\.git$/, "");
+  if (url.startsWith("git@github.com:")) {
+    return "https://github.com/" + url.slice("git@github.com:".length);
+  }
+  if (url.startsWith("github:")) {
+    return "https://github.com/" + url.slice("github:".length);
+  }
+  if (!url.startsWith("http://") && !url.startsWith("https://") && url.includes("/") && !url.includes(":")) {
+    return "https://github.com/" + url;
+  }
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return url;
+  }
+  return null;
+}
+
+/** Read the origin URL from a checkout's .git/config, if any. */
+function readGitConfigUrl(dir) {
+  try {
+    const gitCfg = readFileSync(join(dir, ".git", "config"), "utf8");
+    const m = gitCfg.match(/url\s*=\s*(.+)/);
+    return m ? m[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort repository URL for a discovered plugin directory. */
+function resolveRepoUrl(pkg, dir) {
+  const raw =
+    pkg?.repository?.url ||
+    pkg?.repository ||
+    pkg?.homepage ||
+    (dir && existsSync(join(dir, ".git")) ? readGitConfigUrl(dir) : null);
+  return normalizeRepoUrl(raw);
+}
+
+/**
+ * Inspect one plugin's git update state vs its origin remote.
+ * Non-git installs (or broken checkouts) are uncheckable and carry a reason.
+ */
+function inspectPluginGitState(plugin) {
+  const state = {
+    checkable: false,
+    reason: null,
+    branch: null,
+    behindCount: 0,
+    hasUpdate: false,
+    remoteUrl: plugin.repositoryUrl || null,
+    localCommit: null,
+    remoteCommit: null,
+    dirtyCount: 0,
+    fetchOk: false,
+    checkedAt: null,
+  };
+  const dir = plugin.path;
+  if (!dir || !existsSync(join(dir, ".git"))) {
+    state.reason = dir ? "not-a-git-checkout" : "no-local-path";
+    return state;
+  }
+
+  const branch = safeExec("git rev-parse --abbrev-ref HEAD", dir);
+  if (!branch) {
+    state.reason = "git-command-failed";
+    return state;
+  }
+  if (branch === "HEAD") {
+    state.branch = "HEAD";
+    state.reason = "detached-head";
+    return state;
+  }
+  state.branch = branch;
+
+  const originUrl = readGitConfigUrl(dir);
+  if (originUrl) {
+    state.remoteUrl = normalizeRepoUrl(originUrl);
+  }
+  if (!state.remoteUrl) {
+    state.reason = "no-remote";
+    return state;
+  }
+
+  state.localCommit = safeExec("git rev-parse --short HEAD", dir) || null;
+  state.dirtyCount = safeExec("git status --porcelain", dir)
+    .split("\n")
+    .filter(Boolean).length;
+
+  // Fetch the remote silently; never prompt, never hang on SSH host keys.
+  const fetch = tryExec("GIT_TERMINAL_PROMPT=0 git fetch origin --quiet", dir, 25000);
+  state.fetchOk = fetch.ok;
+
+  const upstreamRef = `origin/${branch}`;
+  state.remoteCommit = safeExec(`git rev-parse --short ${upstreamRef}`, dir) || null;
+  const behindStr = safeExec(`git rev-list --count HEAD..${upstreamRef}`, dir);
+  if (!state.remoteCommit || behindStr === "") {
+    state.reason = "no-upstream-branch";
+    return state;
+  }
+  state.behindCount = parseInt(behindStr, 10) || 0;
+  state.hasUpdate = state.behindCount > 0;
+  state.checkable = true;
+  state.checkedAt = new Date().toISOString();
+  return state;
+}
+
+/** Enrich every discovered plugin with its git update state, in parallel. */
+async function enrichPluginsWithGitState(plugins) {
+  await Promise.all(
+    (plugins || []).map(async (p) => {
+      try {
+        p.gitState = inspectPluginGitState(p);
+      } catch (err) {
+        p.gitState = {
+          checkable: false,
+          reason: "inspect-failed",
+          branch: null,
+          behindCount: 0,
+          hasUpdate: false,
+          remoteUrl: p.repositoryUrl || null,
+          localCommit: null,
+          remoteCommit: null,
+          dirtyCount: 0,
+          fetchOk: false,
+          checkedAt: null,
+          errorMessage: err?.message || "unknown error",
+        };
+      }
+    })
+  );
+  return plugins;
 }
 
 /**
@@ -239,27 +387,7 @@ function checkPluginsStatus() {
                                patchText.includes(`id: ${id}\n  disabled: true`);
             const isEnabled = (inBundles || inPatch) && !isDisabled;
 
-            let repositoryUrl = null;
-            let rawRepo = pPkg?.repository?.url || pPkg?.repository || pPkg?.homepage;
-            if (!rawRepo && existsSync(join(full, ".git"))) {
-              try {
-                const gitCfg = readFileSync(join(full, ".git", "config"), "utf8");
-                const m = gitCfg.match(/url\s*=\s*(.+)/);
-                if (m) rawRepo = m[1].trim();
-              } catch {}
-            }
-            if (typeof rawRepo === "string") {
-              rawRepo = rawRepo.trim().replace(/^git\+/, "").replace(/\.git$/, "");
-              if (rawRepo.startsWith("git@github.com:")) {
-                repositoryUrl = "https://github.com/" + rawRepo.slice("git@github.com:".length);
-              } else if (rawRepo.startsWith("github:")) {
-                repositoryUrl = "https://github.com/" + rawRepo.slice("github:".length);
-              } else if (!rawRepo.startsWith("http://") && !rawRepo.startsWith("https://") && rawRepo.includes("/") && !rawRepo.includes(":")) {
-                repositoryUrl = "https://github.com/" + rawRepo;
-              } else if (rawRepo.startsWith("http://") || rawRepo.startsWith("https://")) {
-                repositoryUrl = rawRepo;
-              }
-            }
+            const repositoryUrl = resolveRepoUrl(pPkg, full);
 
             if (!pluginsMap.has(id)) {
               pluginsMap.set(id, {
@@ -541,10 +669,12 @@ const cachedState = {
   lastUpgradeResult: null,
 };
 
-// Live upgrade process runtime (streamed output tail + current phase)
+// Live upgrade process runtime (streamed output tail + current phase).
+// Shared by core upgrades and per-plugin upgrades; `target` says which one is running.
 const upgradeRuntime = {
   phase: null,
   phaseLabel: "",
+  target: null,
   startedAt: null,
   finishedAt: null,
   tailLines: [],
@@ -572,6 +702,97 @@ function appendUpgradeOutput(chunk) {
 
 function upgradeTailText() {
   return upgradeRuntime.tailLines.join("\n");
+}
+
+// ---- Shared upgrade process runtime (used by core AND per-plugin upgrades) ----
+
+let upgradeSettled = false;
+let upgradeHardCapTimer = null;
+
+function resetUpgradeRuntime(target) {
+  cachedState.isUpgrading = true;
+  cachedState.lastUpgradeResult = null;
+  upgradeSettled = false;
+  upgradeRuntime.phase = "starting";
+  upgradeRuntime.phaseLabel = "";
+  upgradeRuntime.target = target || { type: "core" };
+  upgradeRuntime.startedAt = new Date().toISOString();
+  upgradeRuntime.finishedAt = null;
+  upgradeRuntime.tailLines = [];
+  upgradeRuntime.pending = "";
+}
+
+function finalizeUpgrade(success, error) {
+  if (upgradeSettled) return;
+  upgradeSettled = true;
+  if (upgradeHardCapTimer) {
+    clearTimeout(upgradeHardCapTimer);
+    upgradeHardCapTimer = null;
+  }
+  cachedState.isUpgrading = false;
+  upgradeRuntime.finishedAt = new Date().toISOString();
+  cachedState.lastUpgradeResult = {
+    success,
+    error: success ? null : error,
+    target: upgradeRuntime.target,
+    time: upgradeRuntime.finishedAt,
+  };
+  if (success) {
+    // Refresh version/update state so badges reflect the new code immediately.
+    runFullCheck().catch(() => {});
+  }
+}
+
+function startUpgradeScript(script, cwd) {
+  const logPath = getUpgradeLogPath();
+  const targetLabel = upgradeRuntime.target?.type === "plugin" ? `plugin:${upgradeRuntime.target.id}` : "core";
+  try {
+    writeFileSync(logPath, `=== DeepSeek Harness Upgrade (${targetLabel}) started at ${upgradeRuntime.startedAt} ===\n`, "utf8");
+  } catch {}
+
+  let child;
+  try {
+    child = spawn("bash", ["-c", script], {
+      cwd,
+      env: {
+        ...process.env,
+        PATH: `/root/.nvm/versions/node/v22.23.2/bin:${process.env.PATH || "/usr/local/bin:/usr/bin:/bin"}`,
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+  } catch (err) {
+    appendUpgradeOutput(Buffer.from(`[FAIL] failed to spawn upgrade process: ${err.message}\n`));
+    finalizeUpgrade(false, err.message);
+    return null;
+  }
+
+  child.stdout.on("data", (chunk) => {
+    appendUpgradeOutput(chunk);
+    try { appendFileSync(logPath, chunk); } catch {}
+  });
+  child.stderr.on("data", (chunk) => {
+    appendUpgradeOutput(chunk);
+    try { appendFileSync(logPath, chunk); } catch {}
+  });
+  child.on("error", (err) => {
+    appendUpgradeOutput(Buffer.from(`[FAIL] upgrade process error: ${err.message}\n`));
+    finalizeUpgrade(false, err.message);
+  });
+  child.on("close", (code) => {
+    const tail = code === 0 ? "\n[DONE]\n" : `\n[FAIL] upgrade exited with code ${code}\n`;
+    appendUpgradeOutput(Buffer.from(tail));
+    try { appendFileSync(logPath, tail); } catch {}
+    finalizeUpgrade(code === 0, code === 0 ? null : `upgrade exited with code ${code}`);
+  });
+
+  // Hard safety cap: never leave isUpgrading stuck forever.
+  upgradeHardCapTimer = setTimeout(() => {
+    appendUpgradeOutput(Buffer.from("\n[FAIL] upgrade timed out after 15 minutes and was killed\n"));
+    try { child.kill("SIGKILL"); } catch {}
+    finalizeUpgrade(false, "timeout after 15 minutes");
+  }, 15 * 60 * 1000);
+
+  return child;
 }
 
 function loadPersistedState() {
@@ -605,6 +826,21 @@ function persistState() {
   } catch {}
 }
 
+/**
+ * Re-scan plugins locally (fast, no network) while keeping the git update
+ * state collected by the last full check — used on lightweight refreshes so
+ * badges don't flicker or vanish between full checks.
+ */
+function rescanPluginsPreservingGitState() {
+  const previous = new Map((cachedState.plugins || []).map((p) => [p.id, p]));
+  const fresh = checkPluginsStatus();
+  for (const p of fresh) {
+    const prev = previous.get(p.id);
+    if (prev && prev.gitState) p.gitState = prev.gitState;
+  }
+  return fresh;
+}
+
 async function runFullCheck() {
   if (cachedState.isChecking) return cachedState;
   cachedState.isChecking = true;
@@ -613,6 +849,7 @@ async function runFullCheck() {
       checkCoreStatus(),
       Promise.resolve(checkPluginsStatus()),
     ]);
+    await enrichPluginsWithGitState(plugins);
     cachedState.core = core;
     cachedState.plugins = plugins;
     cachedState.lastChecked = new Date().toISOString();
@@ -656,7 +893,7 @@ export function apply(ctx, config) {
           if (!cachedState.core || !cachedState.lastChecked) {
             await runFullCheck();
           } else {
-            cachedState.plugins = checkPluginsStatus();
+            cachedState.plugins = rescanPluginsPreservingGitState();
           }
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, data: cachedState }));
@@ -695,20 +932,8 @@ export function apply(ctx, config) {
             return;
           }
 
-          cachedState.isUpgrading = true;
-          cachedState.lastUpgradeResult = null;
-          upgradeRuntime.phase = "starting";
-          upgradeRuntime.phaseLabel = "";
-          upgradeRuntime.startedAt = new Date().toISOString();
-          upgradeRuntime.finishedAt = null;
-          upgradeRuntime.tailLines = [];
-          upgradeRuntime.pending = "";
-
-          const logPath = getUpgradeLogPath();
+          resetUpgradeRuntime({ type: "core" });
           const coreDir = findCoreRepoPath();
-          try {
-            writeFileSync(logPath, `=== DeepSeek Harness Upgrade Started at ${upgradeRuntime.startedAt} ===\n`, "utf8");
-          } catch {}
 
           // Stash local modifications so a fast-forward pull can never be
           // blocked by "local changes would be overwritten", then restore them
@@ -774,67 +999,12 @@ echo ""
 echo "=== Upgrade Build Completed at $(date) ==="
 `;
 
-          let settled = false;
-          let timeout = null;
-          const finalize = (success, error) => {
-            if (settled) return;
-            settled = true;
-            if (timeout) clearTimeout(timeout);
-            cachedState.isUpgrading = false;
-            upgradeRuntime.finishedAt = new Date().toISOString();
-            cachedState.lastUpgradeResult = {
-              success,
-              error: success ? null : error,
-              time: upgradeRuntime.finishedAt,
-            };
-            if (success) {
-              runFullCheck().catch(() => {});
-            }
-          };
-
-          let child;
-          try {
-            child = spawn("bash", ["-c", upgradeScript], {
-              cwd: coreDir,
-              env: {
-                ...process.env,
-                PATH: `/root/.nvm/versions/node/v22.23.2/bin:${process.env.PATH || "/usr/local/bin:/usr/bin:/bin"}`,
-                GIT_TERMINAL_PROMPT: "0",
-              },
-            });
-          } catch (err) {
-            appendUpgradeOutput(Buffer.from(`[FAIL] failed to spawn upgrade process: ${err.message}\n`));
-            finalize(false, err.message);
+          const child = startUpgradeScript(upgradeScript, coreDir);
+          if (!child) {
             res.writeHead(500, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ ok: false, message: err.message }));
+            res.end(JSON.stringify({ ok: false, message: "Failed to spawn upgrade process" }));
             return;
           }
-
-          child.stdout.on("data", (chunk) => {
-            appendUpgradeOutput(chunk);
-            try { appendFileSync(logPath, chunk); } catch {}
-          });
-          child.stderr.on("data", (chunk) => {
-            appendUpgradeOutput(chunk);
-            try { appendFileSync(logPath, chunk); } catch {}
-          });
-          child.on("error", (err) => {
-            appendUpgradeOutput(Buffer.from(`[FAIL] upgrade process error: ${err.message}\n`));
-            finalize(false, err.message);
-          });
-          child.on("close", (code) => {
-            const tail = code === 0 ? "\n[DONE]\n" : `\n[FAIL] upgrade exited with code ${code}\n`;
-            appendUpgradeOutput(Buffer.from(tail));
-            try { appendFileSync(logPath, tail); } catch {}
-            finalize(code === 0, code === 0 ? null : `upgrade exited with code ${code}`);
-          });
-
-          // Hard safety cap: never leave isUpgrading stuck forever.
-          timeout = setTimeout(() => {
-            appendUpgradeOutput(Buffer.from("\n[FAIL] upgrade timed out after 15 minutes and was killed\n"));
-            try { child.kill("SIGKILL"); } catch {}
-            finalize(false, "timeout after 15 minutes");
-          }, 15 * 60 * 1000);
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(
@@ -866,6 +1036,7 @@ echo "=== Upgrade Build Completed at $(date) ==="
                 running: Boolean(cachedState.isUpgrading),
                 phase: upgradeRuntime.phase,
                 phaseLabel: upgradeRuntime.phaseLabel,
+                target: upgradeRuntime.target || null,
                 startedAt: upgradeRuntime.startedAt,
                 finishedAt: upgradeRuntime.finishedAt,
                 tail: upgradeTailText(),
@@ -926,7 +1097,7 @@ echo "=== Upgrade Build Completed at $(date) ==="
               }
 
               uninstallPlugin(pluginId, profile);
-              cachedState.plugins = checkPluginsStatus();
+              cachedState.plugins = rescanPluginsPreservingGitState();
               persistState();
 
               res.writeHead(200, { "Content-Type": "application/json" });
@@ -970,7 +1141,7 @@ echo "=== Upgrade Build Completed at $(date) ==="
               }
 
               togglePlugin(pluginId, Boolean(enabled), profile);
-              cachedState.plugins = checkPluginsStatus();
+              cachedState.plugins = rescanPluginsPreservingGitState();
               persistState();
 
               res.writeHead(200, { "Content-Type": "application/json" });
@@ -993,7 +1164,160 @@ echo "=== Upgrade Build Completed at $(date) ==="
       },
     });
 
-    // 8. POST /api/plugins/restart
+    // 8. POST /api/plugins/update — one-click upgrade for a single plugin
+    //    (same scoped stash → pull --ff-only → unstash → pnpm install flow as
+    //    the core upgrade, through the shared live phase/log-tail runtime)
+    ctx.webServer.register({
+      kind: "exact",
+      path: "/api/plugins/update",
+      handler: async (req, res) => {
+        if (req.method === "POST") {
+          let body = "";
+          req.on("data", (chunk) => {
+            body += chunk;
+          });
+          req.on("end", () => {
+            try {
+              const data = JSON.parse(body || "{}");
+              const { pluginId } = data;
+              if (!pluginId) {
+                res.writeHead(400, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ ok: false, error: "pluginId is required" }));
+                return;
+              }
+              if (cachedState.isUpgrading) {
+                res.writeHead(409, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ ok: false, message: "Upgrade already in progress" }));
+                return;
+              }
+
+              let plugin = (cachedState.plugins || []).find((p) => p.id === pluginId || p.name === pluginId);
+              if (!plugin) {
+                cachedState.plugins = rescanPluginsPreservingGitState();
+                plugin = (cachedState.plugins || []).find((p) => p.id === pluginId || p.name === pluginId);
+              }
+              const pluginDir = plugin?.path || "";
+              if (!pluginDir || !existsSync(join(pluginDir, ".git"))) {
+                res.writeHead(400, { "Content-Type": "application/json" });
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    error: `Plugin ${pluginId} is not a git checkout; one-click upgrade is unavailable`,
+                  })
+                );
+                return;
+              }
+
+              resetUpgradeRuntime({ type: "plugin", id: pluginId, name: plugin?.name || pluginId });
+              const profileDir = join(resolveDshHome(), "profiles", plugin?.profile || "web");
+
+              // Scoped per-plugin upgrade: stash → pull --ff-only → unstash →
+              // pnpm install, then refresh the profile so file: dependency
+              // copies pick up the new code.
+              const upgradeScript = `
+set -u
+PLUGIN_DIR=${JSON.stringify(pluginDir)}
+PROFILE_DIR=${JSON.stringify(profileDir)}
+if [ ! -d "$PLUGIN_DIR/.git" ]; then
+  echo "[FAIL] plugin git repo not found at $PLUGIN_DIR"
+  exit 10
+fi
+cd "$PLUGIN_DIR" || exit 10
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+if [ -z "$BRANCH" ] || [ "$BRANCH" = "HEAD" ]; then
+  echo "[FAIL] plugin repo is in detached HEAD state; cannot pull safely"
+  exit 11
+fi
+
+echo ""
+echo "[PHASE] stash | Stashing local changes"
+STASHED=0
+if [ -n "$(git status --porcelain)" ]; then
+  if git stash push --include-untracked -m "dsh-plugin-update auto-stash $(date '+%F %T')"; then
+    STASHED=1
+    echo "[INFO] local changes stashed"
+  else
+    echo "[WARN] git stash failed; pulling without stashing"
+  fi
+else
+  echo "[INFO] no local changes to stash"
+fi
+
+echo ""
+echo "[PHASE] pull | Pulling upstream updates (git pull --ff-only origin $BRANCH)"
+if ! git pull --ff-only origin "$BRANCH"; then
+  echo "[FAIL] git pull failed - upgrade aborted"
+  exit 20
+fi
+
+echo ""
+echo "[PHASE] unstash | Restoring local changes"
+if [ "$STASHED" -eq 1 ]; then
+  if git stash pop; then
+    echo "[INFO] local changes restored"
+  else
+    echo "[WARN] restoring local changes conflicted with upstream; your changes are kept safe in 'git stash' - resolve manually later"
+  fi
+else
+  echo "[INFO] nothing to restore"
+fi
+
+echo ""
+echo "[PHASE] install | Installing plugin dependencies (pnpm install)"
+if [ -f package.json ]; then
+  if ! pnpm install; then
+    echo "[FAIL] pnpm install failed in plugin dir - upgrade aborted"
+    exit 30
+  fi
+else
+  echo "[INFO] no package.json in plugin dir; skipping"
+fi
+
+echo ""
+echo "[PHASE] sync | Syncing profile dependencies (pnpm install)"
+if [ -f "$PROFILE_DIR/package.json" ]; then
+  if ! (cd "$PROFILE_DIR" && pnpm install); then
+    echo "[FAIL] profile pnpm install failed - upgrade aborted"
+    exit 31
+  fi
+else
+  echo "[INFO] profile package.json not found; skipping sync"
+fi
+
+echo ""
+echo "=== Plugin Upgrade Completed at $(date) ==="
+`;
+
+              const child = startUpgradeScript(upgradeScript, pluginDir);
+              if (!child) {
+                res.writeHead(500, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ ok: false, message: "Failed to spawn upgrade process" }));
+                return;
+              }
+
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  message: `Upgrade for plugin ${pluginId} spawned in background`,
+                  logPath: "/api/update-checker/log",
+                  statusPath: "/api/update-checker/upgrade/status",
+                })
+              );
+            } catch (err) {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ ok: false, error: err.message }));
+            }
+          });
+          return;
+        }
+        res.writeHead(405, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "Method not allowed" }));
+      },
+    });
+
+    // 9. POST /api/plugins/restart
     ctx.webServer.register({
       kind: "exact",
       path: "/api/plugins/restart",

@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-Plugin-blueviolet.svg)](https://github.com/deepseek-ai/deepseek-harness)
-[![Version](https://img.shields.io/badge/Version-1.3.1-green.svg)](package.json)
+[![Version](https://img.shields.io/badge/Version-1.4.0-green.svg)](package.json)
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Linux%20%7C%20macOS-informational.svg)](#)
 
 English | [简体中文](README_CN.md)
@@ -29,6 +29,8 @@ Provides real-time core version tracking against upstream GitHub releases, autom
   - Displays current version, upstream commit SHA, commit date, and behind count in real-time.
   - Interactive top-right SVG refresh button for instant status polling.
 
+- 🧩 **Per-Plugin Update Checks**: plugins installed as git checkouts (the usual form for GitHub-sourced bundles) report branch, upstream remote, and how many commits behind they are — with a one-click per-plugin update button; plugin names link straight to their upstream repository when one is known; non-git installs are marked uncheckable with the reason.
+
 - 🧩 **Comprehensive Multi-Source Plugin Discovery**:
   - Automatically scans active profile bundles (`dsh.profile.bundles` in `package.json`), runtime overlays (`cordis.patch.yml`), `~/.dsh/plugins/`, and standalone user workspaces (`~/dsh-*`).
   - Hides internal `@deepseek-ai/*` and `@cordisjs/*` packages to keep your management surface focused on custom community plugins.
@@ -36,7 +38,7 @@ Provides real-time core version tracking against upstream GitHub releases, autom
 - ⚡ **One-Click Lifecycle Control**:
   - **Enable / Disable Toggle**: Mount or unmount any plugin dynamically.
   - **Safe Uninstall**: Removes plugin references from `package.json`, cleans patch files, unlinks plugins, and cleans dependencies via package manager.
-  - **Service Hot-Restart**: Smoothly restart the DSH Web daemon in the background to apply configuration changes.
+  - **Service Hot-Restart**: A manual restart button in the card plus automatic restart prompts. The restart path adapts to the deployment: when the running process lives inside a systemd unit, it restarts through `systemctl` (avoiding a race against the unit's `Restart=always` watchdog); otherwise an external script such as `$DSH_HOME/restart-web.sh` runs detached; bare deployments fall back to a derived kill-and-relaunch command.
 
 - 🎨 **100% Official DSH Design Specification**:
   - Seamlessly integrates into `Settings > Plugin Configuration` (`settings.plugin.item` slot).
@@ -82,6 +84,43 @@ Add the bundle into your profile (`~/.dsh/profiles/web/package.json`):
 
 Restart your DeepSeek Harness server to load the plugin.
 
+### Configuration
+
+The plugin exports a Schemastery `Config` schema that Cordis validates at load time, so defaults live on the schema instead of in code. Every deployment-specific value is a config field; override any of them from your profile's `cordis.patch.yml` by targeting `id: update-checker`:
+
+| Field | Default | Description |
+| :--- | :--- | :--- |
+| `autoCheck` | `true` | Run a check on startup and on an interval. |
+| `checkIntervalHours` | `6` | Hours between background checks. |
+| `githubRepo` | `deepseek-ai/deepseek-harness` | Upstream project slug. |
+| `coreRepoPath` | `""` (auto-detect) | Core checkout used for checks and upgrades. |
+| `branch` | `master` | Upstream branch tracked and pulled. |
+| `nodeBinDir` | running Node's bin dir | Directory holding the `node`/`pnpm` binaries used by upgrade & restart. |
+| `webPort` | `3080` | Port handed to the restarted web server. |
+| `webTrustedHost` | `""` | Optional `--trusted-host` value for the restart command. |
+| `webLogPath` | `$DSH_HOME/dsh-web.log` | Restarted web server log file. |
+| `systemdUnit` | `deepseek-harness` | Systemd unit managing the web service; `""` disables the systemd restart path. |
+| `restartScriptPath` | `""` (`$DSH_HOME/restart-web.sh`) | External restart script executed when systemd does not own the process. |
+| `extraPlugins` | `[]` | Extra plugins surfaced in the manager that live outside the standard scan surfaces (profile bundles, `~/.dsh/plugins`, `~/dsh-*` workspaces) — e.g. an npm-installed tool. Read-only: the installed `package.json` version is compared against the npm registry's `dist-tags.latest` to flag a newer release; update stays manual. |
+
+#### Extra plugins (npm-registry check)
+
+Plugins installed outside the usual dsh surfaces (e.g. via `npm`) are not auto-discovered. Declare them in `extraPlugins` so they appear in the Plugin Manager and get a read-only version check against the npm registry:
+
+```yaml
+- id: update-checker
+  config:
+    extraPlugins:
+      - id: hindsight
+        npm: '@vectorize-io/hindsight-coding-agents'
+        path: '/root/.hindsight/coding-agents'
+        repo: 'https://github.com/vectorize-io/hindsight'
+```
+
+Each entry takes `id` (manager key), `npm` (registry package name), `path` (directory whose `package.json` holds the installed version), and `repo` (repository web URL linked from the card). The card shows the installed version and, when the registry `latest` differs, an `Update Available: current → latest` badge. Update stays manual — run your own install command.
+
+> **Security note**: the management endpoints (`upgrade`, `toggle`, `uninstall`, `restart`) are powerful by design. Deploy them behind an authenticating web-server composition (e.g. a Basic-auth webserver bundle); the plugin itself performs no authorization.
+
 ---
 
 ## 🖥️ Web UI Overview
@@ -114,6 +153,7 @@ The backend registers several lightweight REST endpoints onto the DSH WebServer:
 | `/api/update-checker/log` | `GET` | Full upgrade log (plain text; live tail while an upgrade is running). |
 | `/api/plugins/toggle` | `POST` | Toggle a plugin's `enabled` state (`{ pluginId, enabled, profile }`). |
 | `/api/plugins/uninstall` | `POST` | Remove plugin from profile `package.json`, patches, and run `pnpm remove`. |
+| `/api/plugins/update` | `POST` | Git-update one discovered plugin checkout (`{ pluginId }`): stash → pull --ff-only → unstash → pnpm install, then a profile-wide pnpm install to re-sync file:-installed copies. |
 | `/api/plugins/restart` | `POST` | Safely restart DSH web daemon in the background. |
 
 ---
