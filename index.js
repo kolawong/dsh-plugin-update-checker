@@ -389,7 +389,18 @@ function checkPluginsStatus() {
 
             const repositoryUrl = resolveRepoUrl(pPkg, full);
 
-            if (!pluginsMap.has(id)) {
+            // Prefer a git checkout over a plain copy when the same plugin id is
+            // discovered in multiple places (e.g. a ~/.dsh/plugins deployment copy
+            // shadowing the ~/ workspace checkout): update checks and one-click
+            // upgrades need the real .git directory.
+            const existingEntry = pluginsMap.get(id);
+            const candidateIsGit = existsSync(join(full, ".git"));
+            const preferCandidate =
+              !existingEntry ||
+              (candidateIsGit &&
+                existingEntry.path &&
+                !existsSync(join(existingEntry.path, ".git")));
+            if (preferCandidate) {
               pluginsMap.set(id, {
                 id,
                 name: id,
