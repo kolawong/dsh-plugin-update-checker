@@ -2,6 +2,10 @@
   "name": "dsh-plugin-update-checker",
   "version": "1.4.0",
   "description": "DeepSeek Harness bundle providing core & plugin update checks, GitHub upstream release tracking, Web UI plugin manager, and lifecycle control.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kolawong/dsh-plugin-update-checker.git"
+  },
   "type": "module",
   "main": "index.js",
   "types": "index.d.ts",
