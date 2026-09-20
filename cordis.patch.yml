@@ -6,5 +6,5 @@
         - webServer
       config:
         autoCheck: true
-        checkIntervalHours: 6
+        checkIntervalMinutes: 30
         githubRepo: 'deepseek-ai/deepseek-harness'

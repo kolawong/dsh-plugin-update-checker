@@ -16,6 +16,8 @@ window.__ModuleLoader__.load({
     const { useState, useEffect, useCallback } = React;
     const { jsxs, jsx } = require("react/jsx-runtime");
     const { IconChevronDownOutline14 } = require("@deepseek-ai/dsh-client-ui-primitives");
+    const ReactDOM = require("react-dom");
+    const { createPortal } = ReactDOM;
 
     const NS = "settings.plugin.update-checker";
 
@@ -326,6 +328,67 @@ window.__ModuleLoader__.load({
         }
       } catch {}
     }
+
+    let currentStatus = getInitialStatusData();
+    const statusListeners = new Set();
+
+    function notifyStatusListeners() {
+      for (const listener of statusListeners) {
+        try { listener(currentStatus); } catch (e) {}
+      }
+    }
+
+    function updateGlobalStatus(nextData) {
+      if (!nextData) return;
+      currentStatus = nextData;
+      setStatusCache(nextData);
+      notifyStatusListeners();
+    }
+
+    async function checkOrFetchStatus(forceCheck = false) {
+      try {
+        const url = forceCheck ? "/api/update-checker/check" : "/api/update-checker/status";
+        const method = forceCheck ? "POST" : "GET";
+        const res = await fetch(url, { method });
+        if (res.ok) {
+          const json = await res.json();
+          const nextData = json.data || json;
+          updateGlobalStatus(nextData);
+          return nextData;
+        }
+      } catch (e) {
+        console.warn("[dsh-plugin-update-checker] fetch status error:", e);
+      }
+      return currentStatus;
+    }
+
+    function useUpdateStatus() {
+      const [status, setStatus] = useState(() => currentStatus || getInitialStatusData());
+      useEffect(() => {
+        statusListeners.add(setStatus);
+        checkOrFetchStatus(false);
+
+        // Periodically sync with backend cached status (every 5 minutes)
+        const timer = setInterval(() => {
+          checkOrFetchStatus(false);
+        }, 5 * 60 * 1000);
+
+        // Sync when user refocuses the browser tab
+        const onVisibilityChange = () => {
+          if (document.visibilityState === "visible") {
+            checkOrFetchStatus(false);
+          }
+        };
+        document.addEventListener("visibilitychange", onVisibilityChange);
+
+        return () => {
+          statusListeners.delete(setStatus);
+          clearInterval(timer);
+          document.removeEventListener("visibilitychange", onVisibilityChange);
+        };
+      }, []);
+      return status;
+    }
     function UpdateCheckerCard(props) {
       const rawT = props && typeof props.t === "function" ? props.t : null;
       const t = (key, params) => {
@@ -338,7 +401,8 @@ window.__ModuleLoader__.load({
         }
         return val;
       };
-      const [open, setOpen] = useState(props && props.view === "page");
+      const isModal = props && props.view === "modal";
+      const [open, setOpen] = useState(isModal || (props && props.view === "page"));
       const [data, setData] = useState(() => getInitialStatusData());
       const [loading, setLoading] = useState(() => !getInitialStatusData());
       const [checking, setChecking] = useState(false);
@@ -357,7 +421,7 @@ window.__ModuleLoader__.load({
             const json = await res.json();
             const nextData = json.data || json;
             setData(nextData);
-            setStatusCache(nextData);
+            updateGlobalStatus(nextData);
           }
         } catch (e) {
           console.warn("[dsh-plugin-update-checker] status fetch failed:", e);
@@ -398,7 +462,9 @@ window.__ModuleLoader__.load({
           const res = await fetch("/api/update-checker/check", { method: "POST" });
           if (res.ok) {
             const json = await res.json();
-            setData(json.data || json);
+            const nextData = json.data || json;
+            setData(nextData);
+            updateGlobalStatus(nextData);
           }
         } catch (e) {
           console.warn("[dsh-plugin-update-checker] check failed:", e);
@@ -621,8 +687,96 @@ window.__ModuleLoader__.load({
         }
       };
 
-      return jsx("li", {
-        style: {
+      const statusBadgeNode = coreLoading
+        ? jsx("span", {
+            style: {
+              flex: "none",
+              borderRadius: "999px",
+              padding: "1px 8px",
+              fontSize: "11px",
+              lineHeight: "17px",
+              fontWeight: "500",
+              whiteSpace: "nowrap",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "5px",
+              background: "rgba(59, 130, 246, 0.15)",
+              color: "var(--dsw-alias-brand-primary, #2563eb)",
+              border: "1px solid rgba(59, 130, 246, 0.3)",
+            },
+            children: [
+              jsx(RefreshIconSvg, { spinning: true }),
+              jsx("span", { children: t("loadingStatus") }),
+            ],
+          })
+        : hasUpdate
+        ? jsx("span", {
+            style: {
+              flex: "none",
+              borderRadius: "999px",
+              padding: "1px 8px",
+              fontSize: "11px",
+              lineHeight: "17px",
+              fontWeight: "500",
+              whiteSpace: "nowrap",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "5px",
+              background: "rgba(255, 152, 0, 0.15)",
+              color: "#ea580c",
+              border: "1px solid rgba(255, 152, 0, 0.3)",
+            },
+            children: [
+              jsx("span", {
+                style: {
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "#ea580c",
+                  display: "inline-block",
+                },
+              }),
+              jsx("span", { children: t("updateAvailable") }),
+            ],
+          })
+        : jsx("span", {
+            style: {
+              flex: "none",
+              borderRadius: "999px",
+              padding: "1px 8px",
+              fontSize: "11px",
+              lineHeight: "17px",
+              fontWeight: "500",
+              whiteSpace: "nowrap",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "5px",
+              background: "rgba(16, 185, 129, 0.15)",
+              color: "#10b981",
+              border: "1px solid rgba(16, 185, 129, 0.3)",
+            },
+            children: [
+              jsx("span", {
+                style: {
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "#10b981",
+                  display: "inline-block",
+                },
+              }),
+              jsx("span", { children: t("upToDate") }),
+            ],
+          });
+
+      return jsx(isModal ? "div" : "li", {
+        style: isModal ? {
+          display: "flex",
+          flexDirection: "column",
+          width: "100%",
+          height: "100%",
+          overflow: "hidden",
+        } : {
           listStyle: "none",
           border: "1px solid " + (open ? "var(--dsw-alias-label-dimmed, rgba(120,120,120,0.3))" : "var(--dsw-alias-border-l2, rgba(0,0,0,0.08))"),
           borderRadius: "12px",
@@ -630,148 +784,135 @@ window.__ModuleLoader__.load({
           transition: "border-color .16s, background .16s",
         },
         children: jsxs("div", {
+          style: isModal ? { display: "flex", flexDirection: "column", height: "100%", width: "100%", overflow: "hidden" } : undefined,
           children: [
             // Header Bar
-            jsxs("button", {
-              type: "button",
-              onClick: () => setOpen(!open),
-              style: {
-                width: "100%",
-                appearance: "none",
-                border: 0,
-                background: "none",
-                font: "inherit",
-                color: "inherit",
-                textAlign: "left",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: "12px",
-                padding: "14px 16px",
-                borderRadius: "12px",
-              },
-              children: [
-                jsxs("span", {
-                  style: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" },
+            isModal
+              ? jsxs("div", {
+                  style: {
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "12px",
+                    padding: "16px 20px 14px",
+                    borderBottom: "1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.08))",
+                    background: "var(--dsw-alias-bg-layer-2, #ffffff)",
+                    flex: "none",
+                  },
                   children: [
                     jsxs("span", {
-                      style: {
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        fontSize: "15px",
-                        fontWeight: "600",
-                        lineHeight: 1.4,
-                        color: "var(--dsw-alias-label-primary, #0f172a)",
-                      },
-                      children: [jsx(SystemManageIconSvg, {}), jsx("span", { children: t("title") })],
+                      style: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "3px" },
+                      children: [
+                        jsxs("span", {
+                          style: {
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            fontSize: "16px",
+                            fontWeight: "600",
+                            lineHeight: 1.4,
+                            color: "var(--dsw-alias-label-primary, #0f172a)",
+                          },
+                          children: [jsx(SystemManageIconSvg, {}), jsx("span", { children: t("title") })],
+                        }),
+                        jsx("span", {
+                          style: { fontSize: "12px", lineHeight: 1.4, color: "var(--dsw-alias-label-tertiary, #64748b)" },
+                          children: t("description"),
+                        }),
+                      ],
                     }),
-                    jsx("span", {
-                      style: { fontSize: "13px", lineHeight: 1.5, color: "var(--dsw-alias-label-tertiary, #64748b)" },
-                      children: t("description"),
+                    jsxs("div", {
+                      style: { display: "flex", alignItems: "center", gap: "10px", flex: "none" },
+                      children: [
+                        statusBadgeNode,
+                        props.onClose
+                          ? jsx("button", {
+                              type: "button",
+                              onClick: props.onClose,
+                              title: "关闭",
+                              "aria-label": "关闭",
+                              style: {
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                width: "28px",
+                                height: "28px",
+                                borderRadius: "8px",
+                                border: "none",
+                                background: "transparent",
+                                color: "var(--dsw-alias-label-secondary, #64748b)",
+                                cursor: "pointer",
+                                transition: "background 0.15s ease",
+                              },
+                              children: jsx(CloseIconSvg, {}),
+                            })
+                          : null,
+                      ],
+                    }),
+                  ],
+                })
+              : jsxs("button", {
+                  type: "button",
+                  onClick: () => setOpen(!open),
+                  style: {
+                    width: "100%",
+                    appearance: "none",
+                    border: 0,
+                    background: "none",
+                    font: "inherit",
+                    color: "inherit",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    padding: "14px 16px",
+                    borderRadius: "12px",
+                  },
+                  children: [
+                    jsxs("span", {
+                      style: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" },
+                      children: [
+                        jsxs("span", {
+                          style: {
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            fontSize: "15px",
+                            fontWeight: "600",
+                            lineHeight: 1.4,
+                            color: "var(--dsw-alias-label-primary, #0f172a)",
+                          },
+                          children: [jsx(SystemManageIconSvg, {}), jsx("span", { children: t("title") })],
+                        }),
+                        jsx("span", {
+                          style: { fontSize: "13px", lineHeight: 1.5, color: "var(--dsw-alias-label-tertiary, #64748b)" },
+                          children: t("description"),
+                        }),
+                      ],
+                    }),
+                    statusBadgeNode,
+                    jsx(IconChevronDownOutline14, {
+                      style: {
+                        flex: "none",
+                        color: "var(--dsw-alias-label-tertiary, #64748b)",
+                        transform: open ? "rotate(180deg)" : "rotate(0deg)",
+                        transition: "transform .16s",
+                      },
                     }),
                   ],
                 }),
-                coreLoading
-                  ? jsx("span", {
-                      style: {
-                        flex: "none",
-                        borderRadius: "999px",
-                        padding: "1px 8px",
-                        fontSize: "11px",
-                        lineHeight: "17px",
-                        fontWeight: "500",
-                        whiteSpace: "nowrap",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "5px",
-                        background: "rgba(59, 130, 246, 0.15)",
-                        color: "var(--dsw-alias-brand-primary, #2563eb)",
-                        border: "1px solid rgba(59, 130, 246, 0.3)",
-                      },
-                      children: [
-                        jsx(RefreshIconSvg, { spinning: true }),
-                        jsx("span", { children: t("loadingStatus") }),
-                      ],
-                    })
-                  : hasUpdate
-                  ? jsx("span", {
-                      style: {
-                        flex: "none",
-                        borderRadius: "999px",
-                        padding: "1px 8px",
-                        fontSize: "11px",
-                        lineHeight: "17px",
-                        fontWeight: "500",
-                        whiteSpace: "nowrap",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "5px",
-                        background: "rgba(255, 152, 0, 0.15)",
-                        color: "#ea580c",
-                        border: "1px solid rgba(255, 152, 0, 0.3)",
-                      },
-                      children: [
-                        jsx("span", {
-                          style: {
-                            width: 6,
-                            height: 6,
-                            borderRadius: "50%",
-                            background: "#ea580c",
-                            display: "inline-block",
-                          },
-                        }),
-                        jsx("span", { children: t("updateAvailable") }),
-                      ],
-                    })
-                  : jsx("span", {
-                      style: {
-                        flex: "none",
-                        borderRadius: "999px",
-                        padding: "1px 8px",
-                        fontSize: "11px",
-                        lineHeight: "17px",
-                        fontWeight: "500",
-                        whiteSpace: "nowrap",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "5px",
-                        background: "rgba(16, 185, 129, 0.15)",
-                        color: "#10b981",
-                        border: "1px solid rgba(16, 185, 129, 0.3)",
-                      },
-                      children: [
-                        jsx("span", {
-                          style: {
-                            width: 6,
-                            height: 6,
-                            borderRadius: "50%",
-                            background: "#10b981",
-                            display: "inline-block",
-                          },
-                        }),
-                        jsx("span", { children: t("upToDate") }),
-                      ],
-                    }),
-                jsx(IconChevronDownOutline14, {
-                  style: {
-                    flex: "none",
-                    color: "var(--dsw-alias-label-tertiary, #64748b)",
-                    transform: open ? "rotate(180deg)" : "rotate(0deg)",
-                    transition: "transform .16s",
-                  },
-                }),
-              ],
-            }),
 
             // Expanded Body Panel
             open
               ? jsxs("div", {
                   style: {
-                    borderTop: "1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.08))",
-                    margin: "0 16px",
-                    paddingTop: "14px",
-                    paddingBottom: "14px",
+                    borderTop: isModal ? "none" : "1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.08))",
+                    margin: isModal ? "0" : "0 16px",
+                    padding: isModal ? "16px 20px 24px" : "14px 0",
+                    overflowY: isModal ? "auto" : "visible",
+                    flex: isModal ? "1" : "none",
+                    minHeight: 0,
                     display: "flex",
                     flexDirection: "column",
                     gap: "12px",
@@ -871,33 +1012,41 @@ window.__ModuleLoader__.load({
                                 whiteSpace: "nowrap",
                               },
                               children: [
-                                jsx("span", { children: core?.remoteVersion || core?.currentVersion || (coreLoading ? t("loadingStatus") : "—") }),
-                                core?.remoteCommit
-                                  ? jsxs("a", {
-                                      href: `https://github.com/deepseek-ai/deepseek-harness/commit/${core.remoteCommit}`,
-                                      target: "_blank",
-                                      rel: "noopener noreferrer",
-                                      title: "在 GitHub 中查看远程最新提交",
-                                      style: {
-                                        fontSize: "10px",
-                                        fontWeight: "normal",
-                                        fontFamily: "monospace",
-                                        background: "var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))",
-                                        padding: "1px 4px",
-                                        borderRadius: "3px",
-                                        color: "var(--dsw-alias-brand-primary, #2563eb)",
-                                        textDecoration: "none",
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: "2px",
-                                        cursor: "pointer",
-                                      },
-                                      children: [
-                                        core.remoteCommit.slice(0, 6),
-                                        jsx(ExternalLinkIconSvg, { style: { width: 9, height: 9 } }),
-                                      ],
-                                    })
-                                  : null,
+                                (() => {
+                                  const rVer = core?.latestVersion || core?.remoteVersion || core?.currentVersion || (coreLoading ? t("loadingStatus") : "—");
+                                  const rCommit = core?.latestCommit || core?.remoteCommit || (core?.behindCount === 0 ? core?.currentCommit : null);
+                                  const isSameVer = (core?.latestVersion || core?.remoteVersion) === core?.currentVersion;
+                                  const behindBadge = core?.behindCount > 0 && isSameVer ? ` (+${core.behindCount})` : "";
+                                  return [
+                                    jsx("span", { children: rVer + behindBadge }),
+                                    rCommit
+                                      ? jsxs("a", {
+                                          href: `https://github.com/deepseek-ai/deepseek-harness/commit/${rCommit}`,
+                                          target: "_blank",
+                                          rel: "noopener noreferrer",
+                                          title: "在 GitHub 中查看远程最新提交",
+                                          style: {
+                                            fontSize: "10px",
+                                            fontWeight: "normal",
+                                            fontFamily: "monospace",
+                                            background: "var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))",
+                                            padding: "1px 4px",
+                                            borderRadius: "3px",
+                                            color: "var(--dsw-alias-brand-primary, #2563eb)",
+                                            textDecoration: "none",
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: "2px",
+                                            cursor: "pointer",
+                                          },
+                                          children: [
+                                            rCommit.slice(0, 6),
+                                            jsx(ExternalLinkIconSvg, { style: { width: 9, height: 9 } }),
+                                          ],
+                                        })
+                                      : null,
+                                  ];
+                                })()
                               ],
                             }),
                           ],
@@ -1566,6 +1715,226 @@ window.__ModuleLoader__.load({
       });
     }
 
+    function CloseIconSvg() {
+      return jsx("svg", {
+        fill: "none",
+        viewBox: "0 0 24 24",
+        stroke: "currentColor",
+        style: { width: 16, height: 16 },
+        children: [
+          jsx("path", {
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            strokeWidth: 2,
+            d: "M6 18L18 6M6 6l12 12",
+          }),
+        ],
+      });
+    }
+
+    function UpdateModal(props) {
+      const { open, onClose } = props;
+
+      useEffect(() => {
+        if (!open) return;
+        const onKeyDown = (e) => {
+          if (e.key === "Escape") onClose();
+        };
+        document.addEventListener("keydown", onKeyDown);
+        return () => document.removeEventListener("keydown", onKeyDown);
+      }, [open, onClose]);
+
+      if (!open) return null;
+
+      return createPortal(
+        jsx("div", {
+          role: "presentation",
+          style: {
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+          },
+          children: [
+            jsx("div", {
+              "aria-hidden": "true",
+              onClick: onClose,
+              style: {
+                position: "absolute",
+                inset: 0,
+                background: "var(--dsw-alias-bg-mask-1, rgba(0, 0, 0, 0.45))",
+                backdropFilter: "var(--dsw-mask-blur, blur(4px))",
+                WebkitBackdropFilter: "var(--dsw-mask-blur, blur(4px))",
+              },
+            }),
+            jsx("div", {
+              role: "dialog",
+              "aria-modal": "true",
+              "aria-label": "系统与插件更新",
+              style: {
+                position: "relative",
+                zIndex: 1,
+                display: "flex",
+                flexDirection: "column",
+                width: "min(780px, calc(100vw - 32px))",
+                height: "min(760px, calc(100vh - 48px))",
+                maxHeight: "calc(100vh - 48px)",
+                borderRadius: "20px",
+                overflow: "hidden",
+                background: "var(--dsw-alias-bg-layer-2, #ffffff)",
+                boxShadow: "var(--dsw-elevation-prominent, 0 20px 48px rgba(0,0,0,0.28))",
+                border: "1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08))",
+              },
+              children: jsx(UpdateCheckerCard, {
+                view: "modal",
+                onClose,
+              }),
+            }),
+          ],
+        }),
+        document.body
+      );
+    }
+
+    function UpdateIndicatorButton({ totalUpdates, hasCoreUpdate, pluginUpdatesCount, onClick }) {
+      const [hovered, setHovered] = useState(false);
+      const tooltipText = hasCoreUpdate && pluginUpdatesCount > 0
+        ? `发现新版本：核心及 ${pluginUpdatesCount} 个插件有更新`
+        : hasCoreUpdate
+        ? "发现新版本：Harness 核心有更新"
+        : `发现新版本：${pluginUpdatesCount} 个插件有更新`;
+
+      return jsx("button", {
+        type: "button",
+        id: "dsh-update-indicator-trigger",
+        title: tooltipText,
+        "aria-label": tooltipText,
+        onClick: (e) => {
+          e.stopPropagation();
+          onClick();
+        },
+        onMouseEnter: () => setHovered(true),
+        onMouseLeave: () => setHovered(false),
+        style: {
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "6px",
+          flex: "none",
+          marginInlineEnd: "4px",
+          padding: "3px 9px",
+          border: hovered
+            ? "1px solid var(--dsw-alias-brand-primary-new-colorprimary-new-color, #3b82f6)"
+            : "1px solid color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color, #3b82f6) 28%, transparent)",
+          borderRadius: "8px",
+          color: "var(--dsw-alias-brand-primary-new-colorprimary-new-color, #3b82f6)",
+          background: hovered
+            ? "color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color, #3b82f6) 16%, transparent)"
+            : "color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color, #3b82f6) 8%, transparent)",
+          font: "inherit",
+          fontSize: "12px",
+          fontWeight: "500",
+          lineHeight: "20px",
+          cursor: "pointer",
+          whiteSpace: "nowrap",
+          transition: "background 0.15s ease, border-color 0.15s ease, transform 0.1s ease",
+          transform: hovered ? "translateY(-1px)" : "none",
+        },
+        children: [
+          jsx("span", {
+            style: { position: "relative", display: "inline-flex", alignItems: "center" },
+            children: [
+              jsx("svg", {
+                width: "14",
+                height: "14",
+                viewBox: "0 0 24 24",
+                fill: "none",
+                stroke: "currentColor",
+                strokeWidth: "2",
+                strokeLinecap: "round",
+                strokeLinejoin: "round",
+                children: [
+                  jsx("path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }),
+                  jsx("polyline", { points: "7 10 12 15 17 10" }),
+                  jsx("line", { x1: "12", y1: "15", x2: "12", y2: "3" }),
+                ],
+              }),
+              jsx("span", {
+                style: {
+                  position: "absolute",
+                  top: "-2px",
+                  right: "-3px",
+                  width: "6px",
+                  height: "6px",
+                  borderRadius: "50%",
+                  background: "#ef4444",
+                  boxShadow: "0 0 4px #ef4444",
+                  animation: "dsh-hud-pulse 1.8s infinite ease-in-out",
+                },
+              }),
+            ],
+          }),
+          jsx("span", {
+            children: totalUpdates > 1 ? `发现更新 (${totalUpdates})` : "发现更新",
+          }),
+        ],
+      });
+    }
+
+    function usePortalTarget(selector) {
+      const [target, setTarget] = useState(() => (typeof document !== "undefined" ? document.querySelector(selector) : null));
+      useEffect(() => {
+        const current = document.querySelector(selector);
+        if (current && current !== target) {
+          setTarget(current);
+        }
+        const observer = new MutationObserver(() => {
+          const found = document.querySelector(selector);
+          if (found !== target) {
+            setTarget(found);
+          }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        return () => observer.disconnect();
+      }, [selector, target]);
+      return target;
+    }
+
+    function SidebarFooterUpdateIndicator(props) {
+      const wide = props?.wide !== false;
+      const status = useUpdateStatus();
+      const [modalOpen, setModalOpen] = useState(false);
+      const targetEl = usePortalTarget("[class*='settingsArea'] [class*='triggerRow'], [class*='triggerRow']");
+
+      const hasCoreUpdate = !!(status?.core?.hasUpdate || (status?.core?.behindCount && status.core.behindCount > 0));
+      const pluginUpdatesCount = (status?.plugins || []).filter((p) => p.gitState?.hasUpdate).length;
+      const totalUpdates = (hasCoreUpdate ? 1 : 0) + pluginUpdatesCount;
+      const isDebug = typeof window !== "undefined" && window.__DSH_TEST_UPDATE_INDICATOR__ === true;
+      const hasUpdate = hasCoreUpdate || pluginUpdatesCount > 0 || !!status?.hasUpdate || isDebug;
+
+      const showButton = hasUpdate && wide && !!targetEl;
+
+      return jsxs(React.Fragment, {
+        children: [
+          showButton && createPortal(
+            jsx(UpdateIndicatorButton, {
+              totalUpdates,
+              hasCoreUpdate,
+              pluginUpdatesCount,
+              onClick: () => setModalOpen(true),
+            }),
+            targetEl
+          ),
+          modalOpen && jsx(UpdateModal, {
+            open: modalOpen,
+            onClose: () => setModalOpen(false),
+          }),
+        ],
+      });
+    }
+
     exports.inject = ["locale", "slots"];
 
     
@@ -1829,6 +2198,18 @@ window.__ModuleLoader__.load({
       initGlobalUpgradeGuard();
 
       ctx.locale.register(NS, { zh, en });
+
+      // 0. Bottom-left sidebar indicator beside Settings button
+      ctx.slots.inject("sidebar.footer.action", function* () {
+        const registration = safeSlotRegister(ctx, {
+          name: "sidebar.footer.action",
+          key: "dsh-plugin-update-checker#footer-action",
+          id: "update-checker-footer-action",
+          order: 10,
+          locale: NS,
+        }, SidebarFooterUpdateIndicator);
+        if (registration !== undefined) yield registration;
+      });
 
       // 1. DSH 0.1.6+ Plugin Manager: bundle-level configuration
       ctx.slots.inject("plugins.bundle.config", function* () {

@@ -273,7 +273,9 @@ function getLocalCoreStatus() {
     currentCommitMsg,
     currentBranch,
     latestVersion: currentVersion,
+    remoteVersion: currentVersion,
     latestCommit: currentCommit,
+    remoteCommit: currentCommit,
     latestCommitDate: currentCommitDate,
     latestCommitMsg: currentCommitMsg,
     behindCount: 0,
@@ -323,8 +325,25 @@ async function checkCoreStatus() {
     latestCommitDate = safeExec('git log -1 --format="%ci" origin/master', coreDir) || currentCommitDate;
     latestCommitMsg = safeExec('git log -1 --format="%s" origin/master', coreDir) || currentCommitMsg;
 
+    // 1. Try reading version from remote origin/master:package.json
+    try {
+      const remotePkgJson = safeExec("git show origin/master:package.json", coreDir);
+      if (remotePkgJson) {
+        const parsed = JSON.parse(remotePkgJson);
+        if (parsed && parsed.version) {
+          latestVersion = parsed.version;
+        }
+      }
+    } catch {}
+
+    // 2. If tag exists, compare or use tag
     const tag = safeExec("git describe --tags --abbrev=0 origin/master", coreDir);
-    if (tag) latestVersion = tag.replace(/^dsh-v?/, "v");
+    if (tag) {
+      const cleanTag = tag.replace(/^dsh-v?/, "");
+      if (cleanTag && latestVersion === currentVersion) {
+        latestVersion = cleanTag;
+      }
+    }
 
     const behindStr = safeExec("git rev-list --count HEAD..origin/master", coreDir);
     behindCount = parseInt(behindStr, 10) || 0;
@@ -348,7 +367,9 @@ async function checkCoreStatus() {
     currentCommitMsg,
     currentBranch,
     latestVersion,
+    remoteVersion: latestVersion,
     latestCommit,
+    remoteCommit: latestCommit,
     latestCommitDate,
     latestCommitMsg,
     behindCount,
@@ -943,7 +964,8 @@ export function apply(ctx, config) {
         "update-checker",
         z.object({
           autoCheck: z.boolean().default(true),
-          checkIntervalHours: z.number().default(6),
+          checkIntervalHours: z.number().default(0.5),
+          checkIntervalMinutes: z.number().default(30),
           githubRepo: z.string().default("deepseek-ai/deepseek-harness"),
         })
       );
@@ -969,8 +991,10 @@ export function apply(ctx, config) {
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, data: cachedState }));
 
-          // If never checked before, trigger background check without blocking GET
-          if (!cachedState.lastChecked && !cachedState.isChecking) {
+          // Stale-While-Revalidate: trigger background check if never checked or last check is older than 30m
+          const STALE_MS = 30 * 60 * 1000;
+          const isStale = !cachedState.lastChecked || (Date.now() - new Date(cachedState.lastChecked).getTime() > STALE_MS);
+          if (isStale && !cachedState.isChecking) {
             runFullCheck().catch(() => {});
           }
           return;
@@ -1422,7 +1446,10 @@ echo "=== Plugin Upgrade Completed at $(date) ==="
         .catch(() => {});
     }, 5000);
 
-    const intervalMs = (config?.checkIntervalHours || 6) * 3600 * 1000;
+    const intervalMs = config?.checkIntervalMinutes
+      ? config.checkIntervalMinutes * 60 * 1000
+      : (config?.checkIntervalHours ? config.checkIntervalHours * 3600 * 1000 : 30 * 60 * 1000);
+    ctx.logger?.info?.(`[update-checker] Background check scheduled every ${Math.round(intervalMs / 60000)} minutes`);
     setInterval(() => {
       runFullCheck().catch(() => {});
     }, intervalMs);
