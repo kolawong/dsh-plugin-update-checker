@@ -75,6 +75,8 @@ window.__ModuleLoader__.load({
       reasonDetachedHead: "处于 detached HEAD 状态",
       reasonGitFailed: "Git 命令执行失败",
       reasonInspectFailed: "检查失败",
+      loadingStatus: "读取中…",
+      loadingList: "正在读取系统与插件状态…",
     };
 
     const en = {
@@ -133,6 +135,8 @@ window.__ModuleLoader__.load({
       reasonDetachedHead: "Detached HEAD state",
       reasonGitFailed: "Git command failed",
       reasonInspectFailed: "Inspection failed",
+      loadingStatus: "Loading…",
+      loadingList: "Loading system and plugins…",
     };
 
     // SVG Icons
@@ -292,6 +296,36 @@ window.__ModuleLoader__.load({
       document.head.appendChild(s);
     }
 
+
+    const STATUS_CACHE_KEY = "dsh_update_checker_status_cache";
+    let memoryStatusCache = null;
+
+    function getInitialStatusData() {
+      if (memoryStatusCache) return memoryStatusCache;
+      try {
+        if (typeof localStorage !== "undefined") {
+          const raw = localStorage.getItem(STATUS_CACHE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && (parsed.core || parsed.plugins)) {
+              memoryStatusCache = parsed;
+              return parsed;
+            }
+          }
+        }
+      } catch {}
+      return null;
+    }
+
+    function setStatusCache(data) {
+      if (!data) return;
+      memoryStatusCache = data;
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify(data));
+        }
+      } catch {}
+    }
     function UpdateCheckerCard(props) {
       const rawT = props && typeof props.t === "function" ? props.t : null;
       const t = (key, params) => {
@@ -304,8 +338,9 @@ window.__ModuleLoader__.load({
         }
         return val;
       };
-      const [open, setOpen] = useState(false);
-      const [data, setData] = useState(null);
+      const [open, setOpen] = useState(props && props.view === "page");
+      const [data, setData] = useState(() => getInitialStatusData());
+      const [loading, setLoading] = useState(() => !getInitialStatusData());
       const [checking, setChecking] = useState(false);
       const [upgrading, setUpgrading] = useState(false);
       const [upgradePhase, setUpgradePhase] = useState(null);
@@ -320,10 +355,14 @@ window.__ModuleLoader__.load({
           const res = await fetch("/api/update-checker/status");
           if (res.ok) {
             const json = await res.json();
-            setData(json.data || json);
+            const nextData = json.data || json;
+            setData(nextData);
+            setStatusCache(nextData);
           }
         } catch (e) {
           console.warn("[dsh-plugin-update-checker] status fetch failed:", e);
+        } finally {
+          setLoading(false);
         }
       }, []);
 
@@ -340,10 +379,11 @@ window.__ModuleLoader__.load({
       }, []);
 
       useEffect(() => {
+        if (props && props.view === "summary") return;
         fetchStatus();
         const timer = setInterval(fetchStatus, 60000);
         return () => clearInterval(timer);
-      }, [fetchStatus]);
+      }, [fetchStatus, props?.view]);
 
       // Keep the streaming log pinned to the newest line.
       useEffect(() => {
@@ -565,6 +605,12 @@ window.__ModuleLoader__.load({
       const behindCount = core?.behindCount || 0;
       const lastCheckedTime = data?.lastChecked || core?.lastChecked;
 
+      if (props && props.view === "summary") {
+        return t("description");
+      }
+
+      const coreLoading = loading && !core;
+
       const formatTime = (iso) => {
         if (!iso) return t("never");
         try {
@@ -626,7 +672,29 @@ window.__ModuleLoader__.load({
                     }),
                   ],
                 }),
-                hasUpdate
+                coreLoading
+                  ? jsx("span", {
+                      style: {
+                        flex: "none",
+                        borderRadius: "999px",
+                        padding: "1px 8px",
+                        fontSize: "11px",
+                        lineHeight: "17px",
+                        fontWeight: "500",
+                        whiteSpace: "nowrap",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "5px",
+                        background: "rgba(59, 130, 246, 0.15)",
+                        color: "var(--dsw-alias-brand-primary, #2563eb)",
+                        border: "1px solid rgba(59, 130, 246, 0.3)",
+                      },
+                      children: [
+                        jsx(RefreshIconSvg, { spinning: true }),
+                        jsx("span", { children: t("loadingStatus") }),
+                      ],
+                    })
+                  : hasUpdate
                   ? jsx("span", {
                       style: {
                         flex: "none",
@@ -744,7 +812,7 @@ window.__ModuleLoader__.load({
                                 whiteSpace: "nowrap",
                               },
                               children: [
-                                jsx("span", { children: core?.currentVersion || "0.1.0-rc.8" }),
+                                jsx("span", { children: core?.currentVersion || (coreLoading ? t("loadingStatus") : "—") }),
                                 core?.currentCommit
                                   ? jsxs("a", {
                                       href: `https://github.com/deepseek-ai/deepseek-harness/commit/${core.currentCommit}`,
@@ -803,7 +871,7 @@ window.__ModuleLoader__.load({
                                 whiteSpace: "nowrap",
                               },
                               children: [
-                                jsx("span", { children: core?.remoteVersion || core?.currentVersion || "0.1.0-rc.8" }),
+                                jsx("span", { children: core?.remoteVersion || core?.currentVersion || (coreLoading ? t("loadingStatus") : "—") }),
                                 core?.remoteCommit
                                   ? jsxs("a", {
                                       href: `https://github.com/deepseek-ai/deepseek-harness/commit/${core.remoteCommit}`,
@@ -858,7 +926,7 @@ window.__ModuleLoader__.load({
                                 textOverflow: "ellipsis",
                                 whiteSpace: "nowrap",
                               },
-                              children: behindCount > 0 ? t("behindMsg", { count: behindCount }) : t("aligned"),
+                              children: coreLoading ? t("loadingStatus") : behindCount > 0 ? t("behindMsg", { count: behindCount }) : t("aligned"),
                             }),
                           ],
                         }),
@@ -886,7 +954,7 @@ window.__ModuleLoader__.load({
                                 }),
                                 jsx("div", {
                                   style: { fontSize: "12px", color: "var(--dsw-alias-label-primary, #0f172a)", fontWeight: "500", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-                                  children: formatTime(lastCheckedTime),
+                                  children: coreLoading ? "—" : formatTime(lastCheckedTime),
                                 }),
                               ],
                             }),
@@ -1748,21 +1816,50 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function safeSlotRegister(ctx, options, component) {
+      try {
+        return ctx.slots.register(options, component);
+      } catch (error) {
+        console.warn("[update-checker] slot registration skipped:", error);
+        return undefined;
+      }
+    }
+
     exports.apply = function (ctx) {
       initGlobalUpgradeGuard();
 
       ctx.locale.register(NS, { zh, en });
+
+      // 1. DSH 0.1.6+ Plugin Manager: bundle-level configuration
+      ctx.slots.inject("plugins.bundle.config", function* () {
+        const registration = safeSlotRegister(ctx, {
+          name: "plugins.bundle.config",
+          key: "dsh-plugin-update-checker",
+          locale: NS,
+        }, UpdateCheckerCard);
+        if (registration !== undefined) yield registration;
+      });
+
+      // 2. DSH 0.1.6+ Plugin Manager: row-level configuration
+      ctx.slots.inject("plugins.row.config", function* () {
+        const registration = safeSlotRegister(ctx, {
+          name: "plugins.row.config",
+          key: "dsh-plugin-update-checker#update-checker",
+          locale: NS,
+        }, UpdateCheckerCard);
+        if (registration !== undefined) yield registration;
+      });
+
+      // 3. Legacy DSH (< 0.1.6) Settings modal slot
       ctx.slots.inject("settings.plugin.item", function* () {
-        yield ctx.slots.register(
-          {
-            name: "settings.plugin.item",
-            key: "update-checker",
-            id: "update-checker",
-            order: 10,
-            locale: NS,
-          },
-          UpdateCheckerCard
-        );
+        const registration = safeSlotRegister(ctx, {
+          name: "settings.plugin.item",
+          key: "update-checker",
+          id: "update-checker",
+          order: 10,
+          locale: NS,
+        }, UpdateCheckerCard);
+        if (registration !== undefined) yield registration;
       });
     };
 

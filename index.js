@@ -13,11 +13,27 @@
  * @license MIT
  */
 
-import { execSync, spawn } from "node:child_process";
+import { execSync, spawn, exec } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, readlinkSync, unlinkSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import z from "@deepseek-ai/schemastery";
+
+function asyncExec(cmd, cwd = undefined, timeout = 4000) {
+  return new Promise((resolve) => {
+    try {
+      exec(cmd, { cwd, timeout, encoding: "utf8" }, (err, stdout, stderr) => {
+        if (err) {
+          resolve({ ok: false, out: "", err: stderr || err.message });
+        } else {
+          resolve({ ok: true, out: (stdout || "").trim(), err: "" });
+        }
+      });
+    } catch (e) {
+      resolve({ ok: false, out: "", err: e?.message || "exec failed" });
+    }
+  });
+}
 
 export const name = "update-checker";
 export const inject = ["webServer"];
@@ -132,7 +148,7 @@ function resolveRepoUrl(pkg, dir) {
  * Inspect one plugin's git update state vs its origin remote.
  * Non-git installs (or broken checkouts) are uncheckable and carry a reason.
  */
-function inspectPluginGitState(plugin) {
+async function inspectPluginGitState(plugin) {
   const state = {
     checkable: false,
     reason: null,
@@ -178,8 +194,8 @@ function inspectPluginGitState(plugin) {
     .split("\n")
     .filter(Boolean).length;
 
-  // Fetch the remote silently; never prompt, never hang on SSH host keys.
-  const fetch = tryExec("GIT_TERMINAL_PROMPT=0 git fetch origin --quiet", dir, 25000);
+  // Fetch the remote silently and asynchronously; short 4s timeout so it never hangs.
+  const fetch = await asyncExec("GIT_TERMINAL_PROMPT=0 git fetch origin --quiet", dir, 4000);
   state.fetchOk = fetch.ok;
 
   const upstreamRef = `origin/${branch}`;
@@ -201,7 +217,7 @@ async function enrichPluginsWithGitState(plugins) {
   await Promise.all(
     (plugins || []).map(async (p) => {
       try {
-        p.gitState = inspectPluginGitState(p);
+        p.gitState = await inspectPluginGitState(p);
       } catch (err) {
         p.gitState = {
           checkable: false,
@@ -221,6 +237,49 @@ async function enrichPluginsWithGitState(plugins) {
     })
   );
   return plugins;
+}
+
+/**
+ * Read local core repo info instantly (0ms, no network).
+ */
+function getLocalCoreStatus() {
+  const coreDir = findCoreRepoPath();
+  let currentVersion = "0.1.0";
+  const pkgJsonPath = join(coreDir, "package.json");
+  if (existsSync(pkgJsonPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
+      currentVersion = pkg.version || currentVersion;
+    } catch {}
+  }
+
+  let currentCommit = "";
+  let currentCommitDate = "";
+  let currentCommitMsg = "";
+  let currentBranch = "master";
+
+  if (existsSync(join(coreDir, ".git"))) {
+    currentCommit = safeExec("git rev-parse --short HEAD", coreDir) || "";
+    currentCommitDate = safeExec('git log -1 --format="%ci" HEAD', coreDir) || "";
+    currentCommitMsg = safeExec('git log -1 --format="%s" HEAD', coreDir) || "";
+    currentBranch = safeExec("git rev-parse --abbrev-ref HEAD", coreDir) || "master";
+  }
+
+  return {
+    repoPath: coreDir,
+    currentVersion,
+    currentCommit,
+    currentCommitDate,
+    currentCommitMsg,
+    currentBranch,
+    latestVersion: currentVersion,
+    latestCommit: currentCommit,
+    latestCommitDate: currentCommitDate,
+    latestCommitMsg: currentCommitMsg,
+    behindCount: 0,
+    hasUpdate: false,
+    recentCommits: [],
+  };
 }
 
 /**
@@ -248,8 +307,8 @@ async function checkCoreStatus() {
     currentCommitMsg = safeExec('git log -1 --format="%s" HEAD', coreDir) || "";
     currentBranch = safeExec("git rev-parse --abbrev-ref HEAD", coreDir) || "master";
 
-    // Fetch origin silently to compare commits
-    safeExec("git fetch origin master --tags", coreDir, 20000);
+    // Fetch origin silently to compare commits (async, max 4s)
+    await asyncExec("git fetch origin master --tags", coreDir, 4000);
   }
 
   let latestCommit = currentCommit;
@@ -901,13 +960,19 @@ export function apply(ctx, config) {
       path: "/api/update-checker/status",
       handler: async (req, res) => {
         if (req.method === "GET") {
-          if (!cachedState.core || !cachedState.lastChecked) {
-            await runFullCheck();
-          } else {
+          if (!cachedState.core) {
+            cachedState.core = getLocalCoreStatus();
+          }
+          if (!cachedState.plugins || cachedState.plugins.length === 0) {
             cachedState.plugins = rescanPluginsPreservingGitState();
           }
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, data: cachedState }));
+
+          // If never checked before, trigger background check without blocking GET
+          if (!cachedState.lastChecked && !cachedState.isChecking) {
+            runFullCheck().catch(() => {});
+          }
           return;
         }
         res.writeHead(405, { "Content-Type": "application/json" });
