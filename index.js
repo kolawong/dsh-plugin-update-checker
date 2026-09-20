@@ -16,6 +16,7 @@
 import { execSync, spawn, exec } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, readlinkSync, unlinkSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import https from "node:https";
 import { join, resolve } from "node:path";
 import z from "@deepseek-ai/schemastery";
 
@@ -212,11 +213,142 @@ async function inspectPluginGitState(plugin) {
   return state;
 }
 
-/** Enrich every discovered plugin with its git update state, in parallel. */
+/** Enrich every discovered plugin with its git or npm update state, in parallel. */
+
+function parseSemver(v) {
+  if (!v || typeof v !== "string") return [0, 0, 0, ""];
+  const clean = v.trim().replace(/^[v^~=]/, "");
+  const [main, ...pre] = clean.split("-");
+  const parts = main.split(".").map((n) => parseInt(n, 10) || 0);
+  while (parts.length < 3) parts.push(0);
+  return [...parts.slice(0, 3), pre.join("-")];
+}
+
+function compareSemver(v1, v2) {
+  const [maj1, min1, pat1, pre1] = parseSemver(v1);
+  const [maj2, min2, pat2, pre2] = parseSemver(v2);
+  if (maj1 !== maj2) return maj1 > maj2 ? 1 : -1;
+  if (min1 !== min2) return min1 > min2 ? 1 : -1;
+  if (pat1 !== pat2) return pat1 > pat2 ? 1 : -1;
+  if (pre1 && !pre2) return -1;
+  if (!pre1 && pre2) return 1;
+  if (pre1 && pre2) return pre1.localeCompare(pre2);
+  return 0;
+}
+
+const npmVersionCache = new Map();
+const NPM_CACHE_TTL = 15 * 60 * 1000;
+
+function fetchUrlJson(url, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    try {
+      const req = https.get(url, { timeout: timeoutMs, headers: { "User-Agent": "dsh-update-checker/1.4" } }, (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          return resolve(null);
+        }
+        let data = "";
+        res.on("data", (chunk) => {
+          data += chunk;
+          if (data.length > 200000) {
+            req.destroy();
+            resolve(null);
+          }
+        });
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+      req.on("error", () => resolve(null));
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function fetchNpmLatestVersion(pkgName, timeoutMs = 3500) {
+  if (!pkgName) return null;
+  const now = Date.now();
+  const cached = npmVersionCache.get(pkgName);
+  if (cached && now - cached.timestamp < NPM_CACHE_TTL) {
+    return cached.version;
+  }
+
+  const encodedName = pkgName.startsWith("@")
+    ? `@${encodeURIComponent(pkgName.slice(1))}`
+    : encodeURIComponent(pkgName);
+  const officialUrl = `https://registry.npmjs.org/${encodedName}/latest`;
+  let data = await fetchUrlJson(officialUrl, timeoutMs);
+
+  if (!data?.version) {
+    const mirrorUrl = `https://registry.npmmirror.com/${encodedName}/latest`;
+    data = await fetchUrlJson(mirrorUrl, timeoutMs);
+  }
+
+  if (data?.version) {
+    npmVersionCache.set(pkgName, { version: data.version, timestamp: now });
+    return data.version;
+  }
+  return null;
+}
+
 async function enrichPluginsWithGitState(plugins) {
   await Promise.all(
     (plugins || []).map(async (p) => {
       try {
+        const dir = p.path;
+        const isGit = dir && existsSync(join(dir, ".git"));
+        const npmPkg = p.npmPackage || (p.id === "hindsight" ? "@vectorize-io/hindsight-coding-agents" : null);
+
+        if (!isGit && npmPkg) {
+          const latestVersion = await fetchNpmLatestVersion(npmPkg);
+          if (latestVersion) {
+            const hasUpdate = compareSemver(latestVersion, p.version) > 0;
+            p.gitState = {
+              checkable: true,
+              type: "npm",
+              npmPackage: npmPkg,
+              latestVersion,
+              hasUpdate,
+              branch: null,
+              behindCount: hasUpdate ? 1 : 0,
+              remoteUrl: p.repositoryUrl || `https://www.npmjs.com/package/${npmPkg}`,
+              localCommit: null,
+              remoteCommit: null,
+              dirtyCount: 0,
+              fetchOk: true,
+              checkedAt: new Date().toISOString(),
+              reason: null,
+            };
+            return;
+          } else {
+            p.gitState = {
+              checkable: false,
+              type: "npm",
+              npmPackage: npmPkg,
+              reason: "npm-registry-failed",
+              branch: null,
+              behindCount: 0,
+              hasUpdate: false,
+              remoteUrl: p.repositoryUrl || `https://www.npmjs.com/package/${npmPkg}`,
+              localCommit: null,
+              remoteCommit: null,
+              dirtyCount: 0,
+              fetchOk: false,
+              checkedAt: new Date().toISOString(),
+            };
+            return;
+          }
+        }
+
         p.gitState = await inspectPluginGitState(p);
       } catch (err) {
         p.gitState = {
@@ -1297,18 +1429,64 @@ echo "=== Upgrade Build Completed at $(date) ==="
                 plugin = (cachedState.plugins || []).find((p) => p.id === pluginId || p.name === pluginId);
               }
               const pluginDir = plugin?.path || "";
-              if (!pluginDir || !existsSync(join(pluginDir, ".git"))) {
+              const isGit = pluginDir && existsSync(join(pluginDir, ".git"));
+              const isHindsight = plugin?.id === "hindsight" || plugin?.npmPackage === "@vectorize-io/hindsight-coding-agents";
+              const isNpm = Boolean(isHindsight || plugin?.npmPackage || plugin?.gitState?.type === "npm");
+
+              if (!isGit && !isNpm) {
                 res.writeHead(400, { "Content-Type": "application/json" });
                 res.end(
                   JSON.stringify({
                     ok: false,
-                    error: `Plugin ${pluginId} is not a git checkout; one-click upgrade is unavailable`,
+                    error: `Plugin ${pluginId} is neither a git checkout nor an npm package; one-click upgrade is unavailable`,
                   })
                 );
                 return;
               }
 
               resetUpgradeRuntime({ type: "plugin", id: pluginId, name: plugin?.name || pluginId });
+
+              if (isHindsight) {
+                const upgradeScript = `
+set -u
+echo ""
+echo "[PHASE] install | Updating Hindsight coding agents runtime via npx..."
+if ! npx --yes @vectorize-io/hindsight-coding-agents@latest update; then
+  echo "[FAIL] npx update failed - upgrade aborted"
+  exit 30
+fi
+
+echo ""
+echo "[PHASE] sync | Verifying updated Hindsight version..."
+if [ -f "/root/.hindsight/coding-agents/package.json" ]; then
+  NEW_VER=$(node -e 'try { console.log(JSON.parse(require("fs").readFileSync("/root/.hindsight/coding-agents/package.json")).version); } catch {}')
+  echo "[INFO] Hindsight runtime successfully upgraded to v$NEW_VER"
+else
+  echo "[WARN] Could not find package.json in /root/.hindsight/coding-agents"
+fi
+
+echo ""
+echo "=== Hindsight Upgrade Completed at $(date) ==="
+`;
+                const child = startUpgradeScript(upgradeScript, resolveDshHome());
+                if (!child) {
+                  res.writeHead(500, { "Content-Type": "application/json" });
+                  res.end(JSON.stringify({ ok: false, message: "Failed to spawn upgrade process" }));
+                  return;
+                }
+
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    message: `Upgrade for plugin ${pluginId} spawned in background`,
+                    logPath: "/api/update-checker/log",
+                    statusPath: "/api/update-checker/upgrade/status",
+                  })
+                );
+                return;
+              }
+
               const profileDir = join(resolveDshHome(), "profiles", plugin?.profile || "web");
 
               // Scoped per-plugin upgrade: stash → pull --ff-only → unstash →

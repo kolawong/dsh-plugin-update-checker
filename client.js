@@ -69,6 +69,8 @@ window.__ModuleLoader__.load({
       pluginUncheckable: "无法检查",
       pluginUpdateBtn: "更新",
       pluginUpdateConfirm: "确定要升级插件 {name} 吗？将执行 git stash → pull → pnpm install。",
+      pluginUpdateConfirmNpm: "确定要升级插件 {name} 至最新版本吗？",
+      reasonNpmFailed: "NPM 检查失败",
       pluginUpdateFailed: "插件升级失败，请查看日志",
       reasonNoPath: "无本地目录",
       reasonNotGit: "非 Git 安装",
@@ -129,6 +131,8 @@ window.__ModuleLoader__.load({
       pluginUncheckable: "Can't check",
       pluginUpdateBtn: "Update",
       pluginUpdateConfirm: "Upgrade plugin {name}? This runs git stash → pull → pnpm install.",
+      pluginUpdateConfirmNpm: "Upgrade plugin {name} to the latest version?",
+      reasonNpmFailed: "NPM check failed",
       pluginUpdateFailed: "Plugin upgrade failed, please inspect logs",
       reasonNoPath: "No local directory",
       reasonNotGit: "Not a git checkout",
@@ -490,6 +494,7 @@ window.__ModuleLoader__.load({
         "detached-head": "reasonDetachedHead",
         "git-command-failed": "reasonGitFailed",
         "inspect-failed": "reasonInspectFailed",
+        "npm-registry-failed": "reasonNpmFailed",
       };
       const gitReasonText = (reason) => {
         if (!reason) return "";
@@ -574,7 +579,10 @@ window.__ModuleLoader__.load({
       const handleUpgradePlugin = async (plugin, e) => {
         if (e) e.stopPropagation();
         const pName = plugin.id || plugin.name;
-        if (!confirm(t("pluginUpdateConfirm", { name: pName }))) return;
+        const confirmMsg = plugin.gitState?.type === "npm"
+          ? t("pluginUpdateConfirmNpm", { name: pName })
+          : t("pluginUpdateConfirm", { name: pName });
+        if (!confirm(confirmMsg)) return;
         setUpgrading(true);
         setUpgradePhase(null);
         setLogs("");
@@ -1429,7 +1437,7 @@ window.__ModuleLoader__.load({
                                                     },
                                                     children: p.version,
                                                   }),
-                                                  // Git update badge: behind count / up to date / uncheckable reason
+                                                  // Git / NPM update badge: behind count or latest version / up to date / uncheckable reason
                                                   p.gitState && p.gitState.hasUpdate
                                                     ? jsxs("span", {
                                                         style: {
@@ -1441,10 +1449,14 @@ window.__ModuleLoader__.load({
                                                           fontWeight: "600",
                                                           whiteSpace: "nowrap",
                                                         },
-                                                        title: p.gitState.branch
-                                                          ? `${p.gitState.branch} · ${t("behindMsg", { count: p.gitState.behindCount || 0 })}`
-                                                          : undefined,
-                                                        children: t("behindMsg", { count: p.gitState.behindCount || 0 }),
+                                                        title: p.gitState.type === "npm" || p.gitState.latestVersion
+                                                          ? `最新版本: v${p.gitState.latestVersion || ""}`
+                                                          : (p.gitState.branch
+                                                            ? `${p.gitState.branch} · ${t("behindMsg", { count: p.gitState.behindCount || 0 })}`
+                                                            : undefined),
+                                                        children: p.gitState.type === "npm" || p.gitState.latestVersion
+                                                          ? `新版 v${p.gitState.latestVersion}`
+                                                          : t("behindMsg", { count: p.gitState.behindCount || 0 }),
                                                       })
                                                     : p.gitState && p.gitState.checkable
                                                     ? jsx("span", {
@@ -1494,12 +1506,14 @@ window.__ModuleLoader__.load({
                                           jsxs("div", {
                                             style: { display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 },
                                             children: [
-                                              // One-click update button (git plugins with upstream updates)
+                                              // One-click update button (git or npm plugins with upstream updates)
                                               p.gitState && p.gitState.hasUpdate && p.gitState.checkable && !p.isSelf
                                                 ? jsx("button", {
                                                     type: "button",
                                                     onClick: (e) => handleUpgradePlugin(p, e),
-                                                    title: t("pluginUpdateConfirm", { name: p.id || p.name }),
+                                                    title: p.gitState.type === "npm"
+                                                      ? t("pluginUpdateConfirmNpm", { name: p.id || p.name })
+                                                      : t("pluginUpdateConfirm", { name: p.id || p.name }),
                                                     style: {
                                                       padding: "3px 8px",
                                                       borderRadius: "4px",
