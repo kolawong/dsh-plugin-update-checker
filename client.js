@@ -968,9 +968,9 @@ window.__ModuleLoader__.load({
                   style: {
                     borderTop: isModal ? "none" : "1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.08))",
                     margin: isModal ? "0" : "0 16px",
-                    padding: isModal ? "16px 20px 24px" : "14px 0",
-                    overflowY: isModal ? "auto" : "visible",
-                    flex: isModal ? "1" : "none",
+                    padding: isModal ? "16px 20px 20px" : "14px 0",
+                    overflow: isModal ? "hidden" : "visible",
+                    flex: isModal ? "1 1 0" : "none",
                     minHeight: 0,
                     display: "flex",
                     flexDirection: "column",
@@ -983,6 +983,7 @@ window.__ModuleLoader__.load({
                         display: "grid",
                         gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
                         gap: "8px",
+                        flex: "none",
                       },
                       children: [
                         // Card 1: Current Version
@@ -1257,10 +1258,18 @@ window.__ModuleLoader__.load({
 
                     // Tab Switcher + Upgrade Button Bar
                     jsxs("div", {
-                      style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", marginTop: "2px" },
+                      style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", marginTop: "2px", flex: "none" },
                       children: [
                         jsxs("div", {
-                          style: { display: "flex", gap: "4px" },
+                          style: {
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "2px",
+                            padding: "3px",
+                            borderRadius: "8px",
+                            background: "var(--dsw-alias-bg-layer-1, rgba(0, 0, 0, 0.04))",
+                            border: "1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))",
+                          },
                           children: [
                             jsxs("button", {
                               type: "button",
@@ -1269,14 +1278,16 @@ window.__ModuleLoader__.load({
                                 padding: "5px 12px",
                                 borderRadius: "6px",
                                 border: "none",
-                                background: activeTab === "plugins" ? "rgba(59, 130, 246, 0.15)" : "transparent",
-                                color: activeTab === "plugins" ? "var(--dsw-alias-brand-primary, #2563eb)" : "var(--dsw-alias-label-secondary, #64748b)",
+                                background: activeTab === "plugins" ? "var(--dsw-alias-bg-layer-2, #ffffff)" : "transparent",
+                                color: activeTab === "plugins" ? "var(--dsw-alias-label-primary, #0f172a)" : "var(--dsw-alias-label-tertiary, #64748b)",
+                                boxShadow: activeTab === "plugins" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
                                 cursor: "pointer",
                                 fontSize: "12px",
-                                fontWeight: activeTab === "plugins" ? "600" : "400",
-                                display: "flex",
+                                fontWeight: activeTab === "plugins" ? "600" : "500",
+                                display: "inline-flex",
                                 alignItems: "center",
-                                gap: "5px",
+                                gap: "6px",
+                                transition: "all 0.15s ease",
                               },
                               children: [jsx(PluginIconSvg, {}), `${t("pluginsTab")} (${plugins.length})`],
                             }),
@@ -1287,19 +1298,21 @@ window.__ModuleLoader__.load({
                                 padding: "5px 12px",
                                 borderRadius: "6px",
                                 border: "none",
-                                background: activeTab === "commits" ? "rgba(59, 130, 246, 0.15)" : "transparent",
-                                color: activeTab === "commits" ? "var(--dsw-alias-brand-primary, #2563eb)" : "var(--dsw-alias-label-secondary, #64748b)",
+                                background: activeTab === "commits" ? "var(--dsw-alias-bg-layer-2, #ffffff)" : "transparent",
+                                color: activeTab === "commits" ? "var(--dsw-alias-label-primary, #0f172a)" : "var(--dsw-alias-label-tertiary, #64748b)",
+                                boxShadow: activeTab === "commits" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
                                 cursor: "pointer",
                                 fontSize: "12px",
-                                fontWeight: activeTab === "commits" ? "600" : "400",
-                                display: "flex",
+                                fontWeight: activeTab === "commits" ? "600" : "500",
+                                display: "inline-flex",
                                 alignItems: "center",
-                                gap: "5px",
+                                gap: "6px",
+                                transition: "all 0.15s ease",
                               },
                               children: [jsx(GitCommitIconSvg, {}), t("commitsTab")],
                             }),
-                            upgrading
-                              ? jsx("button", {
+                            (upgrading || logs || activeTab === "logs")
+                              ? jsxs("button", {
                                   type: "button",
                                   onClick: () => {
                                     setActiveTab("logs");
@@ -1309,13 +1322,18 @@ window.__ModuleLoader__.load({
                                     padding: "5px 12px",
                                     borderRadius: "6px",
                                     border: "none",
-                                    background: activeTab === "logs" ? "rgba(59, 130, 246, 0.15)" : "transparent",
-                                    color: activeTab === "logs" ? "var(--dsw-alias-brand-primary, #2563eb)" : "var(--dsw-alias-label-secondary, #64748b)",
+                                    background: activeTab === "logs" ? "var(--dsw-alias-bg-layer-2, #ffffff)" : "transparent",
+                                    color: activeTab === "logs" ? "var(--dsw-alias-label-primary, #0f172a)" : "var(--dsw-alias-label-tertiary, #64748b)",
+                                    boxShadow: activeTab === "logs" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
                                     cursor: "pointer",
                                     fontSize: "12px",
-                                    fontWeight: activeTab === "logs" ? "600" : "400",
+                                    fontWeight: activeTab === "logs" ? "600" : "500",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "6px",
+                                    transition: "all 0.15s ease",
                                   },
-                                  children: t("logsTab"),
+                                  children: [jsx(TerminalIconSvg, {}), t("logsTab")],
                                 })
                               : null,
                           ],
@@ -1375,7 +1393,9 @@ window.__ModuleLoader__.load({
                     activeTab === "plugins"
                       ? jsx("div", {
                           style: {
-                            maxHeight: "280px",
+                            flex: isModal ? "1 1 0" : "none",
+                            minHeight: 0,
+                            maxHeight: isModal ? "none" : "280px",
                             overflowY: "auto",
                             background: "var(--dsw-alias-bg-layer-1, rgba(0, 0, 0, 0.03))",
                             borderRadius: "8px",
@@ -1666,7 +1686,9 @@ window.__ModuleLoader__.load({
                     activeTab === "commits"
                       ? jsx("div", {
                           style: {
-                            maxHeight: "220px",
+                            flex: isModal ? "1 1 0" : "none",
+                            minHeight: 0,
+                            maxHeight: isModal ? "none" : "220px",
                             overflowY: "auto",
                             background: "var(--dsw-alias-bg-layer-1, rgba(0, 0, 0, 0.03))",
                             borderRadius: "8px",
@@ -1767,11 +1789,13 @@ window.__ModuleLoader__.load({
                       ? jsx("div", {
                           ref: logsRef,
                           style: {
-                            maxHeight: "180px",
+                            flex: isModal ? "1 1 0" : "none",
+                            minHeight: isModal ? 0 : "180px",
+                            maxHeight: isModal ? "none" : "280px",
                             overflowY: "auto",
                             background: "var(--dsw-alias-bg-layer-1, #0f172a)",
                             borderRadius: "8px",
-                            padding: "10px",
+                            padding: "12px 14px",
                             fontSize: "11px",
                             fontFamily: "monospace",
                             color: "#10b981",
@@ -1800,6 +1824,32 @@ window.__ModuleLoader__.load({
             strokeLinejoin: "round",
             strokeWidth: 2,
             d: "M6 18L18 6M6 6l12 12",
+          }),
+        ],
+      });
+    }
+
+    function TerminalIconSvg({ style } = {}) {
+      return jsx("svg", {
+        fill: "none",
+        viewBox: "0 0 24 24",
+        stroke: "currentColor",
+        style: { width: 14, height: 14, ...style },
+        children: [
+          jsx("polyline", {
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            strokeWidth: 2,
+            points: "4 17 10 11 4 5",
+          }),
+          jsx("line", {
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            strokeWidth: 2,
+            x1: "12",
+            y1: "19",
+            x2: "20",
+            y2: "19",
           }),
         ],
       });
@@ -1852,9 +1902,9 @@ window.__ModuleLoader__.load({
                 zIndex: 1,
                 display: "flex",
                 flexDirection: "column",
-                width: "min(780px, calc(100vw - 32px))",
-                height: "min(760px, calc(100vh - 48px))",
-                maxHeight: "calc(100vh - 48px)",
+                width: "min(840px, calc(100vw - 32px))",
+                height: "min(680px, calc(100vh - 64px))",
+                maxHeight: "calc(100vh - 64px)",
                 borderRadius: "20px",
                 overflow: "hidden",
                 background: "var(--dsw-alias-bg-layer-2, #ffffff)",
@@ -2169,11 +2219,13 @@ window.__ModuleLoader__.load({
           <span style="background: rgba(255,255,255,0.1); border-radius: 999px; padding: 2px 8px; font-size: 11px; color: #cbd5e1;">
             ${phaseLabel}
           </span>
-          <span style="font-family: monospace; font-size: 12px; color: #38bdf8; font-weight: 600;">
-            ⏱️ ${elapsedSec}s
+          <span style="font-family: monospace; font-size: 12px; color: #38bdf8; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            ${elapsedSec}s
           </span>
-          <span style="color: #fbbf24; font-size: 11px; display: flex; align-items: center; gap: 4px;">
-            ⚠️ 请勿刷新页面
+          <span style="color: #fbbf24; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            请勿刷新页面
           </span>
           <button id="dsh-hud-toggle-log" style="background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer;">
             ${globalLogExpanded ? "收起日志" : "查看日志"}
@@ -2207,7 +2259,9 @@ window.__ModuleLoader__.load({
         hudEl.innerHTML = `
           <div class="dsh-hud-pill completed">
             <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="color: #10b981; font-size: 14px;">🎉</span>
+              <span style="color: #10b981; display: inline-flex; align-items: center;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+              </span>
               <span style="font-weight: 600; color: #fff;">${okTitle}</span>
             </div>
             <button id="dsh-hud-restart-btn" style="background: #10b981; border: none; color: #fff; font-weight: 600; border-radius: 999px; padding: 4px 14px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 10px rgba(16,185,129,0.4);">
@@ -2216,7 +2270,9 @@ window.__ModuleLoader__.load({
               </svg>
               立即重启服务生效
             </button>
-            <button id="dsh-hud-close-btn" style="background: none; border: none; color: #94a3b8; font-size: 14px; cursor: pointer; padding: 0 4px;">✕</button>
+            <button id="dsh-hud-close-btn" title="关闭" style="background: none; border: none; color: #94a3b8; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 2px 4px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
           </div>
         `;
 
@@ -2244,11 +2300,15 @@ window.__ModuleLoader__.load({
         hudEl.innerHTML = `
           <div class="dsh-hud-pill" style="border-color: #ef4444; animation: none;">
             <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="color: #ef4444; font-size: 14px;">❌</span>
+              <span style="color: #ef4444; display: inline-flex; align-items: center;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              </span>
               <span style="font-weight: 600; color: #fff;">升级遇到问题</span>
             </div>
             <span style="font-size: 11px; color: #fca5a5;">请查看日志排查</span>
-            <button id="dsh-hud-close-btn" style="background: none; border: none; color: #94a3b8; font-size: 14px; cursor: pointer; padding: 0 4px;">✕</button>
+            <button id="dsh-hud-close-btn" title="关闭" style="background: none; border: none; color: #94a3b8; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 2px 4px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
           </div>
         `;
         const closeBtn = document.getElementById("dsh-hud-close-btn");
