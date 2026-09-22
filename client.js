@@ -14,8 +14,19 @@ window.__ModuleLoader__.load({
     const exports = {};
     const React = require("react");
     const { useState, useEffect, useCallback } = React;
-    const { jsxs, jsx } = require("react/jsx-runtime");
-    const { IconChevronDownOutline14 } = require("@deepseek-ai/dsh-client-ui-primitives");
+    const { jsxs, jsx, Fragment } = require("react/jsx-runtime");
+    const primitives = require("@deepseek-ai/dsh-client-ui-primitives");
+    if (primitives && typeof primitives === "object") {
+      for (const key of Object.keys(primitives)) {
+        if (key.startsWith("Icon") && key.endsWith("Regular")) {
+          const base = key.slice(0, -7);
+          for (const suffix of ["12", "14", "16", "18", "20", "24", ""]) {
+            if (!primitives[base + suffix]) primitives[base + suffix] = primitives[key];
+          }
+        }
+      }
+    }
+    const IconChevronDownOutline14 = primitives.IconChevronDownOutlineRegular || primitives.IconChevronDownOutline14 || (() => null);
     const ReactDOM = require("react-dom");
     const { createPortal } = ReactDOM;
 
@@ -1978,9 +1989,11 @@ window.__ModuleLoader__.load({
 
       const showButton = hasUpdate && wide && !!targetEl;
 
-      return jsxs(React.Fragment, {
+      if (!showButton && !modalOpen) return null;
+      const Container = Fragment || "div";
+      return jsxs(Container, {
         children: [
-          showButton && createPortal(
+          showButton && targetEl && createPortal(
             jsx(UpdateIndicatorButton, {
               totalUpdates,
               hasCoreUpdate,

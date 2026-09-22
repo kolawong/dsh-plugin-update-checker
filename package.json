@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-update-checker",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "DeepSeek Harness bundle providing core & plugin update checks, GitHub upstream release tracking, Web UI plugin manager, and lifecycle control.",
   "repository": {
     "type": "git",
@@ -56,5 +56,9 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
     "@deepseek-ai/schemastery": ">=3.0.0"
+  },
+  "scripts": {
+    "build": "node -c index.js && node -c client.js",
+    "prepare": "node -c index.js && node -c client.js"
   }
 }

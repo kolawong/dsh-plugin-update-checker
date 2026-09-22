@@ -36,6 +36,17 @@ function asyncExec(cmd, cwd = undefined, timeout = 4000) {
   });
 }
 
+export const Config = z.object({
+  autoCheck: z.boolean().default(true),
+  checkIntervalHours: z.number().default(0.5),
+  checkIntervalMinutes: z.number().default(30),
+  githubRepo: z.string().default("deepseek-ai/deepseek-harness"),
+  branch: z.string().default("master"),
+  coreRepoPath: z.string().default(""),
+  extraPlugins: z.array(z.any()).default([]),
+});
+Config.meta.volatile = true;
+
 export const name = "update-checker";
 export const inject = ["webServer"];
 
@@ -1213,17 +1224,21 @@ export function apply(ctx, config) {
   // Register settings schema
   ctx.inject(["settings"], (sctx) => {
     try {
-      sctx.settings.register(
-        "update-checker",
-        z.object({
-          autoCheck: z.boolean().default(true),
-          checkIntervalHours: z.number().default(0.5),
-          checkIntervalMinutes: z.number().default(30),
-          githubRepo: z.string().default("deepseek-ai/deepseek-harness"),
-        })
-      );
+      if (typeof sctx.settings?.register === "function") {
+        sctx.settings.register("update-checker", Config, { base: cachedPluginConfig });
+      }
     } catch (e) {
       ctx.logger?.warn?.("[update-checker] settings registration:", e);
+    }
+  });
+
+  ctx.on("settings/document-updated", (ns) => {
+    if (ns === "update-checker") {
+      const entries = ctx.root?.configEditor?.entries?.() || [];
+      const entry = entries.find((r) => r.options?.id === "update-checker");
+      if (entry?.options?.config) {
+        cachedPluginConfig = { ...cachedPluginConfig, ...entry.options.config };
+      }
     }
   });
 
