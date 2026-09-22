@@ -1,5 +1,5 @@
 /**
- * dsh-plugin-update-checker — Client half (Web UI Settings Card) (Version 1.4.0)
+ * dsh-plugin-update-checker — Client half (Web UI Settings Card) (Version 1.4.1)
  *
  * 100% aligned with official DSH PluginCard design specification.
  * Full reactive adaptation for Light Mode and Dark Mode.
@@ -43,6 +43,8 @@ window.__ModuleLoader__.load({
       noPlugins: "暂无扫描到第三方插件",
       aligned: "0 (已对齐)",
       behindMsg: "落后 {count} 提交",
+      behindMsgAtLeast: "落后 ≥{count} 提交",
+      checkFailed: "检查失败",
       enabled: "已启用",
       disabled: "已停用",
       builtin: "官方内置",
@@ -79,6 +81,7 @@ window.__ModuleLoader__.load({
       reasonDetachedHead: "处于 detached HEAD 状态",
       reasonGitFailed: "Git 命令执行失败",
       reasonInspectFailed: "检查失败",
+      reasonNetwork: "网络不可达",
       loadingStatus: "读取中…",
       loadingList: "正在读取系统与插件状态…",
     };
@@ -105,6 +108,8 @@ window.__ModuleLoader__.load({
       noPlugins: "No plugins found",
       aligned: "0 (Aligned)",
       behindMsg: "{count} commits behind",
+      behindMsgAtLeast: "{count}+ commits behind",
+      checkFailed: "Check Failed",
       enabled: "Enabled",
       disabled: "Disabled",
       builtin: "Built-in",
@@ -141,6 +146,7 @@ window.__ModuleLoader__.load({
       reasonDetachedHead: "Detached HEAD state",
       reasonGitFailed: "Git command failed",
       reasonInspectFailed: "Inspection failed",
+      reasonNetwork: "Network unreachable",
       loadingStatus: "Loading…",
       loadingList: "Loading system and plugins…",
     };
@@ -494,6 +500,7 @@ window.__ModuleLoader__.load({
         "detached-head": "reasonDetachedHead",
         "git-command-failed": "reasonGitFailed",
         "inspect-failed": "reasonInspectFailed",
+        "network-unreachable": "reasonNetwork",
         "npm-registry-failed": "reasonNpmFailed",
       };
       const gitReasonText = (reason) => {
@@ -745,6 +752,36 @@ window.__ModuleLoader__.load({
                 },
               }),
               jsx("span", { children: t("updateAvailable") }),
+            ],
+          })
+        : core?.checkStale
+        ? jsx("span", {
+            style: {
+              flex: "none",
+              borderRadius: "999px",
+              padding: "1px 8px",
+              fontSize: "11px",
+              lineHeight: "17px",
+              fontWeight: "500",
+              whiteSpace: "nowrap",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "5px",
+              background: "rgba(100, 116, 139, 0.15)",
+              color: "#64748b",
+              border: "1px solid rgba(100, 116, 139, 0.3)",
+            },
+            children: [
+              jsx("span", {
+                style: {
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "#64748b",
+                  display: "inline-block",
+                },
+              }),
+              jsx("span", { children: t("checkFailed") }),
             ],
           })
         : jsx("span", {
@@ -1021,7 +1058,9 @@ window.__ModuleLoader__.load({
                               },
                               children: [
                                 (() => {
-                                  const rVer = core?.latestVersion || core?.remoteVersion || core?.currentVersion || (coreLoading ? t("loadingStatus") : "—");
+                                  const rVer = core?.checkStale
+                                    ? "—"
+                                    : core?.latestVersion || core?.remoteVersion || (core?.behindCountExact === false ? "—" : core?.currentVersion) || (coreLoading ? t("loadingStatus") : "—");
                                   const rCommit = core?.latestCommit || core?.remoteCommit || (core?.behindCount === 0 ? core?.currentCommit : null);
                                   const isSameVer = (core?.latestVersion || core?.remoteVersion) === core?.currentVersion;
                                   const behindBadge = core?.behindCount > 0 && isSameVer ? ` (+${core.behindCount})` : "";
@@ -1078,12 +1117,18 @@ window.__ModuleLoader__.load({
                               style: {
                                 fontSize: "13px",
                                 fontWeight: "600",
-                                color: behindCount > 0 ? "#ea580c" : "#10b981",
+                                color: core?.checkStale ? "#f59e0b" : behindCount > 0 ? "#ea580c" : "#10b981",
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
                                 whiteSpace: "nowrap",
                               },
-                              children: coreLoading ? t("loadingStatus") : behindCount > 0 ? t("behindMsg", { count: behindCount }) : t("aligned"),
+                              children: coreLoading
+                                ? t("loadingStatus")
+                                : core?.checkStale
+                                ? t("checkFailed")
+                                : behindCount > 0
+                                ? t(core?.behindCountExact === false ? "behindMsgAtLeast" : "behindMsg", { count: behindCount })
+                                : t("aligned"),
                             }),
                           ],
                         }),
@@ -1452,11 +1497,11 @@ window.__ModuleLoader__.load({
                                                         title: p.gitState.type === "npm" || p.gitState.latestVersion
                                                           ? `最新版本: v${p.gitState.latestVersion || ""}`
                                                           : (p.gitState.branch
-                                                            ? `${p.gitState.branch} · ${t("behindMsg", { count: p.gitState.behindCount || 0 })}`
+                                                            ? `${p.gitState.branch} · ${t(p.gitState.behindCountExact === false ? "behindMsgAtLeast" : "behindMsg", { count: p.gitState.behindCount || 0 })}`
                                                             : undefined),
                                                         children: p.gitState.type === "npm" || p.gitState.latestVersion
                                                           ? `新版 v${p.gitState.latestVersion}`
-                                                          : t("behindMsg", { count: p.gitState.behindCount || 0 }),
+                                                          : t(p.gitState.behindCountExact === false ? "behindMsgAtLeast" : "behindMsg", { count: p.gitState.behindCount || 0 }),
                                                       })
                                                     : p.gitState && p.gitState.checkable
                                                     ? jsx("span", {

@@ -1,5 +1,5 @@
 /**
- * dsh-plugin-update-checker — Server half (Version 1.4.0)
+ * dsh-plugin-update-checker — Server half (Version 1.4.1)
  *
  * DeepSeek Harness Cordis plugin providing:
  * 1. Core version tracking (local Git repo vs upstream GitHub)
@@ -71,6 +71,9 @@ function getUpgradeLogPath() {
 
 function findCoreRepoPath() {
   const candidates = [
+    typeof cachedPluginConfig?.coreRepoPath === "string" && cachedPluginConfig.coreRepoPath.trim()
+      ? cachedPluginConfig.coreRepoPath.trim()
+      : null,
     process.env.DSH_CORE_PATH,
     "/root/deepseek-harness",
     join(homedir(), "deepseek-harness"),
@@ -83,6 +86,13 @@ function findCoreRepoPath() {
     }
   }
   return "/root/deepseek-harness";
+}
+
+/** Upstream branch tracked for core update checks (config `branch`, default master). */
+function coreBranchName() {
+  const b = cachedPluginConfig?.branch;
+  if (typeof b === "string" && /^[A-Za-z0-9._/-]{1,120}$/.test(b.trim())) return b.trim();
+  return "master";
 }
 
 function safeExec(cmd, cwd = undefined, timeout = 15000) {
@@ -155,6 +165,7 @@ async function inspectPluginGitState(plugin) {
     reason: null,
     branch: null,
     behindCount: 0,
+    behindCountExact: true,
     hasUpdate: false,
     remoteUrl: plugin.repositoryUrl || null,
     localCommit: null,
@@ -195,19 +206,51 @@ async function inspectPluginGitState(plugin) {
     .split("\n")
     .filter(Boolean).length;
 
-  // Fetch the remote silently and asynchronously; short 4s timeout so it never hangs.
-  const fetch = await asyncExec("GIT_TERMINAL_PROMPT=0 git fetch origin --quiet", dir, 4000);
+  // Fetch the remote silently and asynchronously. The timeout is generous on
+  // purpose: a fetch killed mid-transfer leaves `origin/<branch>` stale, and an
+  // answer computed from a stale ref is a false "up to date".
+  const fetch = await asyncExec("GIT_TERMINAL_PROMPT=0 git fetch origin --quiet", dir, 20000);
   state.fetchOk = fetch.ok;
 
   const upstreamRef = `origin/${branch}`;
-  state.remoteCommit = safeExec(`git rev-parse --short ${upstreamRef}`, dir) || null;
-  const behindStr = safeExec(`git rev-list --count HEAD..${upstreamRef}`, dir);
-  if (!state.remoteCommit || behindStr === "") {
+  if (fetch.ok) {
+    state.remoteCommit = safeExec(`git rev-parse --short ${upstreamRef}`, dir) || null;
+    const behindStr = safeExec(`git rev-list --count HEAD..${upstreamRef}`, dir);
+    if (!state.remoteCommit || behindStr === "") {
+      state.reason = "no-upstream-branch";
+      return state;
+    }
+    state.behindCount = parseInt(behindStr, 10) || 0;
+    state.behindCountExact = true;
+    state.hasUpdate = state.behindCount > 0;
+    state.checkable = true;
+    state.checkedAt = new Date().toISOString();
+    return state;
+  }
+
+  // Fetch failed — never answer from the possibly-stale tracking ref. Fall back
+  // to a lightweight ls-remote SHA comparison so a moved upstream is still
+  // detected instead of being silently reported as "up to date".
+  const ls = await asyncExec(
+    `GIT_TERMINAL_PROMPT=0 git ls-remote --heads origin refs/heads/${branch}`,
+    dir,
+    10000
+  );
+  if (!ls.ok) {
+    state.reason = "network-unreachable";
+    return state;
+  }
+  const remoteSha = pickRemoteHeadSha(ls.out.split("\n"), branch);
+  if (!remoteSha) {
     state.reason = "no-upstream-branch";
     return state;
   }
-  state.behindCount = parseInt(behindStr, 10) || 0;
-  state.hasUpdate = state.behindCount > 0;
+  const localSha = safeExec("git rev-parse HEAD", dir);
+  state.remoteCommit = remoteSha.slice(0, 10);
+  const moved = !!localSha && remoteSha !== localSha;
+  state.behindCount = moved ? 1 : 0;
+  state.behindCountExact = !moved;
+  state.hasUpdate = moved;
   state.checkable = true;
   state.checkedAt = new Date().toISOString();
   return state;
@@ -234,6 +277,34 @@ function compareSemver(v1, v2) {
   if (!pre1 && pre2) return 1;
   if (pre1 && pre2) return pre1.localeCompare(pre2);
   return 0;
+}
+
+/**
+ * Best release-tag version (e.g. `dsh-v0.1.7-alpha.1`) from `git ls-remote`
+ * output lines, chosen by semver — not by date or lexicographic order.
+ */
+function pickLatestTagVersion(lines) {
+  let best = null;
+  for (const line of lines || []) {
+    const m = String(line).trim().match(/^[0-9a-f]{40}\s+refs\/tags\/(.+)$/);
+    if (!m) continue;
+    const rawName = m[1];
+    if (rawName.endsWith("^{}")) continue;
+    const ver = rawName.replace(/^dsh-/, "").replace(/^v/, "");
+    if (!/^\d+\.\d+\.\d+/.test(ver)) continue;
+    if (best === null || compareSemver(ver, best) > 0) best = ver;
+  }
+  return best;
+}
+
+/** Extract the full commit SHA for `refs/heads/<branch>` from ls-remote output. */
+function pickRemoteHeadSha(lines, branch) {
+  const want = `refs/heads/${branch}`;
+  for (const line of lines || []) {
+    const parts = String(line).trim().split(/\s+/);
+    if (parts.length >= 2 && parts[1] === want) return parts[0];
+  }
+  return "";
 }
 
 const npmVersionCache = new Map();
@@ -411,7 +482,11 @@ function getLocalCoreStatus() {
     latestCommitDate: currentCommitDate,
     latestCommitMsg: currentCommitMsg,
     behindCount: 0,
+    behindCountExact: true,
     hasUpdate: false,
+    fetchOk: null,
+    checkStale: false,
+    checkReason: null,
     recentCommits: [],
   };
 }
@@ -434,6 +509,9 @@ async function checkCoreStatus() {
   let currentCommitDate = "";
   let currentCommitMsg = "";
   let currentBranch = "master";
+  let fetchOk = false;
+  const branchName = coreBranchName();
+  const upstreamRef = `origin/${branchName}`;
 
   if (existsSync(join(coreDir, ".git"))) {
     currentCommit = safeExec("git rev-parse --short HEAD", coreDir) || "";
@@ -441,8 +519,17 @@ async function checkCoreStatus() {
     currentCommitMsg = safeExec('git log -1 --format="%s" HEAD', coreDir) || "";
     currentBranch = safeExec("git rev-parse --abbrev-ref HEAD", coreDir) || "master";
 
-    // Fetch origin silently to compare commits (async, max 4s)
-    await asyncExec("git fetch origin master --tags", coreDir, 4000);
+    // Fetch origin silently to compare commits (async). The timeout is generous
+    // on purpose: a fetch killed mid-transfer leaves the tracking ref stale, and
+    // every answer computed from a stale ref is a false "up to date" — exactly
+    // how the dsh-v0.1.7-alpha.1 release (1299 commits + a new tag) stayed
+    // invisible behind the old hard 4s kill.
+    const fetch = await asyncExec(
+      `GIT_TERMINAL_PROMPT=0 git fetch origin ${branchName} --tags --quiet`,
+      coreDir,
+      60000
+    );
+    fetchOk = fetch.ok;
   }
 
   let latestCommit = currentCommit;
@@ -450,16 +537,19 @@ async function checkCoreStatus() {
   let latestCommitMsg = currentCommitMsg;
   let latestVersion = currentVersion;
   let behindCount = 0;
+  let behindCountExact = true;
+  let checkStale = false;
+  let checkReason = null;
   const recentCommits = [];
 
-  if (existsSync(join(coreDir, ".git"))) {
-    latestCommit = safeExec("git rev-parse --short origin/master", coreDir) || currentCommit;
-    latestCommitDate = safeExec('git log -1 --format="%ci" origin/master', coreDir) || currentCommitDate;
-    latestCommitMsg = safeExec('git log -1 --format="%s" origin/master', coreDir) || currentCommitMsg;
+  if (existsSync(join(coreDir, ".git")) && fetchOk) {
+    latestCommit = safeExec(`git rev-parse --short ${upstreamRef}`, coreDir) || currentCommit;
+    latestCommitDate = safeExec(`git log -1 --format="%ci" ${upstreamRef}`, coreDir) || currentCommitDate;
+    latestCommitMsg = safeExec(`git log -1 --format="%s" ${upstreamRef}`, coreDir) || currentCommitMsg;
 
-    // 1. Try reading version from remote origin/master:package.json
+    // 1. Try reading version from remote origin/<branch>:package.json
     try {
-      const remotePkgJson = safeExec("git show origin/master:package.json", coreDir);
+      const remotePkgJson = safeExec(`git show ${upstreamRef}:package.json`, coreDir);
       if (remotePkgJson) {
         const parsed = JSON.parse(remotePkgJson);
         if (parsed && parsed.version) {
@@ -469,7 +559,7 @@ async function checkCoreStatus() {
     } catch {}
 
     // 2. If tag exists, compare or use tag
-    const tag = safeExec("git describe --tags --abbrev=0 origin/master", coreDir);
+    const tag = safeExec(`git describe --tags --abbrev=0 ${upstreamRef}`, coreDir);
     if (tag) {
       const cleanTag = tag.replace(/^dsh-v?/, "");
       if (cleanTag && latestVersion === currentVersion) {
@@ -477,10 +567,11 @@ async function checkCoreStatus() {
       }
     }
 
-    const behindStr = safeExec("git rev-list --count HEAD..origin/master", coreDir);
+    const behindStr = safeExec(`git rev-list --count HEAD..${upstreamRef}`, coreDir);
     behindCount = parseInt(behindStr, 10) || 0;
+    behindCountExact = true;
 
-    const logLines = safeExec('git log -n 12 --format="%h%x09%an%x09%ci%x09%s" origin/master', coreDir);
+    const logLines = safeExec(`git log -n 12 --format="%h%x09%an%x09%ci%x09%s" ${upstreamRef}`, coreDir);
     if (logLines) {
       for (const line of logLines.split("\n")) {
         const [sha, author, date, message] = line.split("\t");
@@ -488,6 +579,32 @@ async function checkCoreStatus() {
           recentCommits.push({ sha, author, date, message });
         }
       }
+    }
+  } else if (existsSync(join(coreDir, ".git"))) {
+    // Fetch failed (typically a hard timeout killing a large delta mid
+    // transfer). Never answer from the possibly-stale tracking ref — fall back
+    // to a lightweight ls-remote so a moved upstream is still detected instead
+    // of being silently reported as "up to date".
+    const ls = await asyncExec("GIT_TERMINAL_PROMPT=0 git ls-remote --heads --tags origin", coreDir, 10000);
+    const lines = ls.ok ? ls.out.split("\n") : [];
+    const remoteHeadSha = ls.ok ? pickRemoteHeadSha(lines, branchName) : "";
+    const tagVersion = ls.ok ? pickLatestTagVersion(lines) : null;
+
+    if (!ls.ok) {
+      checkStale = true;
+      checkReason = "network-unreachable";
+      latestVersion = null;
+    } else if (!remoteHeadSha) {
+      checkStale = true;
+      checkReason = "no-upstream-branch";
+      latestVersion = tagVersion;
+    } else {
+      const localSha = safeExec("git rev-parse HEAD", coreDir);
+      const moved = !!localSha && remoteHeadSha !== localSha;
+      latestCommit = moved ? remoteHeadSha.slice(0, 10) : currentCommit;
+      latestVersion = tagVersion || (moved ? null : currentVersion);
+      behindCount = moved ? 1 : 0; // at least one; the exact count needs a successful fetch
+      behindCountExact = !moved;
     }
   }
 
@@ -505,7 +622,11 @@ async function checkCoreStatus() {
     latestCommitDate,
     latestCommitMsg,
     behindCount,
+    behindCountExact,
     hasUpdate: behindCount > 0,
+    fetchOk,
+    checkStale,
+    checkReason,
     recentCommits,
   };
 }
