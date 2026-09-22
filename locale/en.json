@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-plugin-update-checker",
+    "description": "DeepSeek Harness bundle providing core & plugin update checks, GitHub upstream release tracking, Web UI plugin manager, and lifecycle control."
+  }
+}

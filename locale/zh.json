@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-plugin-update-checker",
+    "description": "系统与插件生命周期管理：内核升级检测、GitHub 上游分支跟踪、Web UI 插件管理、实时编译日志与一键平滑升级。"
+  }
+}

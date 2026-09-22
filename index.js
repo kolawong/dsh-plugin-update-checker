@@ -745,13 +745,15 @@ function checkPluginsStatus() {
                 existingEntry.path &&
                 !existsSync(join(existingEntry.path, ".git")));
             if (preferCandidate) {
+              const descInfo = readPluginDescriptions(full, pPkg);
               pluginsMap.set(id, {
                 id,
                 name: id,
                 dirName: entry,
                 path: full,
                 version: pPkg.version || "1.0.0",
-                description: pPkg.description || "",
+                description: descInfo.description,
+                descriptionZh: descInfo.descriptionZh,
                 repositoryUrl,
                 enabled: isEnabled,
                 isSelf,
@@ -781,12 +783,15 @@ function checkPluginsStatus() {
 
     let version = deps[b] || "1.0.0";
     let description = "";
+    let descriptionZh = "";
     const pluginPkgPath = join(profileDir, profile, "node_modules", b, "package.json");
     if (existsSync(pluginPkgPath)) {
       try {
         const pPkg = JSON.parse(readFileSync(pluginPkgPath, "utf8"));
         version = pPkg.version || version;
-        description = pPkg.description || description;
+        const descInfo = readPluginDescriptions(join(profileDir, profile, "node_modules", b), pPkg);
+        description = descInfo.description;
+        descriptionZh = descInfo.descriptionZh;
       } catch {}
     } else if (deps[b] && (deps[b].startsWith("file:") || deps[b].startsWith("link:"))) {
       description = `Local package: ${deps[b].replace(/^(file|link):/, "")}`;
@@ -800,6 +805,7 @@ function checkPluginsStatus() {
       path: "",
       version,
       description,
+      descriptionZh,
       enabled: bundles.includes(b),
       isSelf,
       removable: !isSelf,
@@ -850,11 +856,14 @@ function checkPluginsStatus() {
       let description = ep.description || "";
       let repositoryUrl = ep.repo || null;
       let npmPackage = ep.npm || null;
+      let descriptionZh = "";
       if (pPath && existsSync(join(pPath, "package.json"))) {
         try {
           const pPkg = JSON.parse(readFileSync(join(pPath, "package.json"), "utf8"));
           version = pPkg.version || version;
-          description = pPkg.description || description;
+          const descInfo = readPluginDescriptions(pPath, pPkg);
+          description = descInfo.description;
+          descriptionZh = descInfo.descriptionZh;
           npmPackage = npmPackage || pPkg.name;
         } catch {}
       }
@@ -866,6 +875,7 @@ function checkPluginsStatus() {
           path: pPath,
           version,
           description,
+          descriptionZh,
           repositoryUrl,
           npmPackage,
           enabled: true,

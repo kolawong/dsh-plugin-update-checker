@@ -15,7 +15,8 @@
       "default": "./index.js"
     },
     "./client": "./client.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "dsh": {
     "bundle": {
@@ -51,7 +52,8 @@
     "cordis.patch.yml",
     "README.md",
     "README_CN.md",
-    "LICENSE"
+    "LICENSE",
+    "locale/*.json"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",

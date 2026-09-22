@@ -1565,7 +1565,7 @@ window.__ModuleLoader__.load({
                                                     : null,
                                                 ],
                                               }),
-                                              p.description
+                                              (p.description || p.descriptionZh)
                                                 ? jsx("div", {
                                                     style: {
                                                       fontSize: "11px",
@@ -1575,7 +1575,7 @@ window.__ModuleLoader__.load({
                                                       textOverflow: "ellipsis",
                                                       whiteSpace: "nowrap",
                                                     },
-                                                    children: p.description,
+                                                    children: p.descriptionZh || p.description,
                                                   })
                                                 : null,
                                             ],
