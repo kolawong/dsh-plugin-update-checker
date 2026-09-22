@@ -1,5 +1,5 @@
 /**
- * dsh-plugin-update-checker — Client half (Web UI Settings Card) (Version 1.4.1)
+ * dsh-plugin-update-checker — Client half (Web UI Settings Card) (Version 1.4.2)
  *
  * 100% aligned with official DSH PluginCard design specification.
  * Full reactive adaptation for Light Mode and Dark Mode.
@@ -63,6 +63,7 @@ window.__ModuleLoader__.load({
       upgradeSuccessRestart: "升级完成！点击「重启服务」应用新版本。",
       phaseStash: "暂存本地修改",
       phasePull: "拉取上游更新",
+      phasePrune: "清理已删除包的构建残留",
       phaseUnstash: "恢复本地修改",
       phaseInstall: "安装依赖",
       phaseBuild: "编译内核",
@@ -128,6 +129,7 @@ window.__ModuleLoader__.load({
       upgradeSuccessRestart: "Upgrade completed! Restart the service to apply the new version.",
       phaseStash: "Stashing local changes",
       phasePull: "Pulling upstream updates",
+      phasePrune: "Pruning build leftovers of removed packages",
       phaseUnstash: "Restoring local changes",
       phaseInstall: "Installing dependencies",
       phaseBuild: "Building harness packages",
@@ -486,6 +488,7 @@ window.__ModuleLoader__.load({
       const PHASE_LOCALE_KEY = {
         stash: "phaseStash",
         pull: "phasePull",
+        prune: "phasePrune",
         unstash: "phaseUnstash",
         install: "phaseInstall",
         build: "phaseBuild",

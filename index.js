@@ -1,5 +1,5 @@
 /**
- * dsh-plugin-update-checker — Server half (Version 1.4.1)
+ * dsh-plugin-update-checker — Server half (Version 1.4.2)
  *
  * DeepSeek Harness Cordis plugin providing:
  * 1. Core version tracking (local Git repo vs upstream GitHub)
@@ -1292,6 +1292,11 @@ export function apply(ctx, config) {
           // blocked by "local changes would be overwritten", then restore them
           // after the pull. Every step streams its output to the parent process
           // (which mirrors it into upgrade.log and the live tail buffer).
+          // `pull` is followed by `prune`: when upstream deletes or renames a
+          // workspace package, the gitignored build leftovers of its old path
+          // survive the pull and the build's `packages/*/*` workspace glob picks
+          // their stale `lib/types/*.js` up as entries — which fails the build
+          // against the new sources (this hid the 0.1.7-alpha.1 upgrade twice).
           const upgradeScript = `
 set -u
 CORE=${JSON.stringify(coreDir)}
@@ -1315,11 +1320,34 @@ else
   echo "[INFO] no local changes to stash"
 fi
 
+PRE=$(git rev-parse HEAD 2>/dev/null || true)
+
 echo ""
 echo "[PHASE] pull | Pulling upstream updates (git pull --ff-only)"
 if ! git pull --ff-only origin master; then
   echo "[FAIL] git pull failed - upgrade aborted"
   exit 20
+fi
+
+echo ""
+echo "[PHASE] prune | Pruning build leftovers of removed packages"
+if [ -n "$PRE" ]; then
+  git diff --no-renames --name-only --diff-filter=D "$PRE"..HEAD | grep -E '(^|/)package\\.json$' | while IFS= read -r f; do
+    d=$(dirname "$f")
+    [ "$d" = "." ] && continue
+    [ -d "$d" ] || continue
+    [ -f "$d/package.json" ] && continue
+    [ -n "$(git ls-files "$d")" ] && continue
+    for e in lib node_modules .typecheck; do
+      if [ -e "$d/$e" ]; then
+        echo "[INFO] removing generated leftovers: $d/$e"
+        rm -rf "$d/$e"
+      fi
+    done
+    rmdir "$d" 2>/dev/null || true
+  done
+else
+  echo "[INFO] unknown base commit; skipping prune"
 fi
 
 echo ""
