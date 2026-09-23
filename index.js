@@ -166,6 +166,38 @@ function resolveRepoUrl(pkg, dir) {
   return normalizeRepoUrl(raw);
 }
 
+/** Read localized and standard descriptions for a plugin. */
+function readPluginDescriptions(dir, pPkg) {
+  let description = pPkg?.description || "";
+  let descriptionZh = pPkg?.descriptionZh || "";
+
+  if (dir) {
+    const zhJsonPaths = [
+      join(dir, "locale", "zh.json"),
+      join(dir, "locale", "zh-CN.json"),
+      join(dir, "locales", "zh.json"),
+      join(dir, "locales", "zh-CN.json"),
+    ];
+    for (const p of zhJsonPaths) {
+      if (existsSync(p)) {
+        try {
+          const loc = JSON.parse(readFileSync(p, "utf8"));
+          if (loc?.meta?.description) {
+            descriptionZh = loc.meta.description;
+            break;
+          }
+          if (loc?.description) {
+            descriptionZh = loc.description;
+            break;
+          }
+        } catch {}
+      }
+    }
+  }
+
+  return { description, descriptionZh };
+}
+
 /**
  * Inspect one plugin's git update state vs its origin remote.
  * Non-git installs (or broken checkouts) are uncheckable and carry a reason.
@@ -186,12 +218,19 @@ async function inspectPluginGitState(plugin) {
     checkedAt: null,
   };
   const dir = plugin.path;
-  if (!dir || !existsSync(join(dir, ".git"))) {
+  let workDir = dir;
+  if (dir && !existsSync(join(dir, ".git"))) {
+    const topLevel = safeExec("git rev-parse --show-toplevel", dir);
+    if (topLevel && existsSync(join(topLevel, ".git"))) {
+      workDir = topLevel;
+    }
+  }
+  if (!workDir || !existsSync(join(workDir, ".git"))) {
     state.reason = dir ? "not-a-git-checkout" : "no-local-path";
     return state;
   }
 
-  const branch = safeExec("git rev-parse --abbrev-ref HEAD", dir);
+  const branch = safeExec("git rev-parse --abbrev-ref HEAD", workDir);
   if (!branch) {
     state.reason = "git-command-failed";
     return state;
@@ -203,7 +242,7 @@ async function inspectPluginGitState(plugin) {
   }
   state.branch = branch;
 
-  const originUrl = readGitConfigUrl(dir);
+  const originUrl = readGitConfigUrl(workDir);
   if (originUrl) {
     state.remoteUrl = normalizeRepoUrl(originUrl);
   }
@@ -212,21 +251,21 @@ async function inspectPluginGitState(plugin) {
     return state;
   }
 
-  state.localCommit = safeExec("git rev-parse --short HEAD", dir) || null;
-  state.dirtyCount = safeExec("git status --porcelain", dir)
+  state.localCommit = safeExec("git rev-parse --short HEAD", workDir) || null;
+  state.dirtyCount = safeExec("git status --porcelain", workDir)
     .split("\n")
     .filter(Boolean).length;
 
   // Fetch the remote silently and asynchronously. The timeout is generous on
   // purpose: a fetch killed mid-transfer leaves `origin/<branch>` stale, and an
   // answer computed from a stale ref is a false "up to date".
-  const fetch = await asyncExec("GIT_TERMINAL_PROMPT=0 git fetch origin --quiet", dir, 20000);
+  const fetch = await asyncExec("GIT_TERMINAL_PROMPT=0 git fetch origin --quiet", workDir, 20000);
   state.fetchOk = fetch.ok;
 
   const upstreamRef = `origin/${branch}`;
   if (fetch.ok) {
-    state.remoteCommit = safeExec(`git rev-parse --short ${upstreamRef}`, dir) || null;
-    const behindStr = safeExec(`git rev-list --count HEAD..${upstreamRef}`, dir);
+    state.remoteCommit = safeExec(`git rev-parse --short ${upstreamRef}`, workDir) || null;
+    const behindStr = safeExec(`git rev-list --count HEAD..${upstreamRef}`, workDir);
     if (!state.remoteCommit || behindStr === "") {
       state.reason = "no-upstream-branch";
       return state;
@@ -256,7 +295,7 @@ async function inspectPluginGitState(plugin) {
     state.reason = "no-upstream-branch";
     return state;
   }
-  const localSha = safeExec("git rev-parse HEAD", dir);
+  const localSha = safeExec("git rev-parse HEAD", workDir);
   state.remoteCommit = remoteSha.slice(0, 10);
   const moved = !!localSha && remoteSha !== localSha;
   state.behindCount = moved ? 1 : 0;
@@ -797,15 +836,21 @@ function checkPluginsStatus() {
       description = `Local package: ${deps[b].replace(/^(file|link):/, "")}`;
     }
 
+    let pluginPath = "";
+    if (deps[b] && (deps[b].startsWith("file:") || deps[b].startsWith("link:"))) {
+      const rawPath = deps[b].replace(/^(file|link):/, "");
+      pluginPath = resolve(profileDir, profile, rawPath);
+    }
     const isSelf = b === "dsh-plugin-update-checker";
     pluginsMap.set(b, {
       id: b,
       name: b,
       dirName: b,
-      path: "",
+      path: pluginPath,
       version,
       description,
       descriptionZh,
+      repositoryUrl: resolveRepoUrl(null, pluginPath),
       enabled: bundles.includes(b),
       isSelf,
       removable: !isSelf,
